@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Modération — Policies{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .policy-card { margin-bottom: 16px; }
+  .policy-card h3 { margin: 0 0 12px; color: var(--accent); font-family: ui-monospace, monospace; }
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 20px; margin-bottom: 12px; }
+  .toggle { display: flex; align-items: center; gap: 8px; }
+  .toggle input { width: auto; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .stats { display: flex; gap: 20px; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .stats span strong { color: var(--fg); }
+  .phase-legend { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération</h1>
+
+<div class="subnav">
+  <a href="/moderation" class="{% if sub_active == 'policies' %}active{% endif %}">Policies</a>
+  <a href="/moderation/whitelist" class="{% if sub_active == 'whitelist' %}active{% endif %}">Whitelist</a>
+  <a href="/moderation/tracelog" class="{% if sub_active == 'tracelog' %}active{% endif %}">Tracelog</a>
+  <a href="/moderation/reputation" class="{% if sub_active == 'reputation' %}active{% endif %}">Réputation</a>
+  <a href="/moderation/patterns" class="{% if sub_active == 'patterns' %}active{% endif %}">Patterns</a>
+  <a href="/moderation/llm" class="{% if sub_active == 'llm' %}active{% endif %}">LLM</a>
+  <a href="/moderation/bans" class="{% if sub_active == 'bans' %}active{% endif %}">Bans</a>
+  <a href="/moderation/alerts" class="{% if sub_active == 'alerts' %}active{% endif %}">Alertes</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé.</div>
+{% endif %}
+{% if request.query_params.get('err') %}
+<div class="toast" style="background:#3a1a1a; border-color:#642; color:#f8b5b5;">Erreur : {{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<div class="banner-info">
+  <strong>Phases 1-4 déployées.</strong> Tracelog (P1), Réputation (P2), Patterns + LLM (P3),
+  et <strong>Ban engine (P4)</strong> sont tous opérationnels. La modération respecte 3 gates :
+  (1) feature toggle activé, (2) <code>auto_ban_enabled</code> = ON, (3) <code>dry_run</code> = OFF.
+  Laisser <em>dry_run</em> ON pendant l'observation → les bans sont loggés dans <a href="/moderation/bans">/moderation/bans</a>
+  sans envoyer d'ordre IRC. Passer dry_run OFF quand tu es prêt à voir les vrais MODE +b.
+</div>
+
+<div class="stats">
+  <span>Tracelog queue : <strong>{{ queue_stats.queued }}</strong> / {{ queue_stats.max }}</span>
+  <span>Worker : <strong>{{ 'up' if queue_stats.worker_running else 'DOWN' }}</strong></span>
+  <span>DNS cache : <strong>{{ dns_stats.live }}</strong> entries ({{ dns_stats.positive }} +, {{ dns_stats.negative }} -)</span>
+</div>
+
+{% for p in policies %}
+<div class="card policy-card">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+    <h3 style="margin:0;">{{ p.channel }}</h3>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <details style="position:relative;">
+        <summary style="cursor:pointer; padding:4px 10px; border:1px solid var(--border); border-radius:6px; font-size:12px; list-style:none;">Renommer</summary>
+        <form method="post" action="/moderation/policies/rename"
+              style="position:absolute; right:0; top:32px; z-index:10; display:flex; gap:6px; background:var(--bg); border:1px solid var(--border); padding:8px; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+          <input type="hidden" name="channel" value="{{ p.channel }}">
+          <input type="text" name="new_channel" value="{{ p.channel }}" required style="min-width:180px;">
+          <button type="submit">OK</button>
+        </form>
+      </details>
+      <form method="post" action="/moderation/policies/delete"
+            onsubmit="return confirm('Supprimer la policy {{ p.channel }} ? L\'historique (tracelog, bans, incidents) est préservé.');"
+            style="margin:0;">
+        <input type="hidden" name="channel" value="{{ p.channel }}">
+        <button type="submit" style="background:#5a1a1a; border-color:#844; color:#f8b5b5;">Supprimer</button>
+      </form>
+    </div>
+  </div>
+<form method="post" action="/moderation/policies/save">
+  <input type="hidden" name="channel" value="{{ p.channel }}">
+
+  <div class="toggles">
+    <label class="toggle">
+      <input type="checkbox" name="tracelog_enabled" {% if p.tracelog_enabled %}checked{% endif %}>
+      Tracelog <span class="phase-legend">(P1)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="whitelist_enforced" {% if p.whitelist_enforced %}checked{% endif %}>
+      Whitelist respectée <span class="phase-legend">(P1+)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="reputation_check_enabled" {% if p.reputation_check_enabled %}checked{% endif %}>
+      Check réputation IP <span class="phase-legend">(P2)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="llm_moderation_enabled" {% if p.llm_moderation_enabled %}checked{% endif %}>
+      Modération LLM <span class="phase-legend">(P3)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="pattern_detection_enabled" {% if p.pattern_detection_enabled %}checked{% endif %}>
+      Détection patterns <span class="phase-legend">(P3)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="join_check_enabled" {% if p.join_check_enabled %}checked{% endif %}>
+      Check dès JOIN <span class="phase-legend">(P2+)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="auto_ban_enabled" {% if p.auto_ban_enabled %}checked{% endif %}>
+      Ban automatique <span class="phase-legend">(P4)</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="dry_run" {% if p.dry_run %}checked{% endif %}>
+      Dry-run (log sans exécuter) <span class="phase-legend">(P4)</span>
+    </label>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Seuil AbuseIPDB (0-100)</label>
+      <input type="number" name="abuseipdb_threshold" value="{{ p.abuseipdb_threshold }}" min="0" max="100">
+    </div>
+    <div>
+      <label>Incidents locaux avant flag</label>
+      <input type="number" name="local_incident_threshold" value="{{ p.local_incident_threshold }}" min="1">
+    </div>
+    <div>
+      <label>Durée ban (sec, 0 = perma)</label>
+      <input type="number" name="default_ban_duration_sec" value="{{ p.default_ban_duration_sec }}" min="0">
+    </div>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Modèle LLM (modération)</label>
+      <input type="text" name="llm_model_for_moderation" value="{{ p.llm_model_for_moderation or '' }}" placeholder="qwen2.5:3b">
+    </div>
+    <div>
+      <label>Modèle LLM (chat)</label>
+      <input type="text" name="llm_model_for_chat" value="{{ p.llm_model_for_chat or '' }}" placeholder="défaut du LLM config">
+    </div>
+    <div>
+      <label>Notif nick (DM op)</label>
+      <input type="text" name="notify_nick" value="{{ p.notify_nick or '' }}" placeholder="admin_nick">
+    </div>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Notif channel (post ban)</label>
+      <input type="text" name="notify_channel" value="{{ p.notify_channel or '' }}" placeholder="#ops-alerts">
+    </div>
+    <div>
+      <label>Template raison de ban (voir <a href="/moderation/bans">Bans</a>)</label>
+      <input type="text" name="ban_reason_template_id" value="{{ p.ban_reason_template_id or '' }}"
+             placeholder="ID (vide = default global)" pattern="[0-9]*">
+    </div>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <button type="submit">Sauvegarder {{ p.channel }}</button>
+  </div>
+</form>
+</div>
+{% endfor %}
+
+<div class="card">
+  <h3>Ajouter une policy pour un nouveau chan</h3>
+  <form method="post" action="/moderation/policies/new" style="display: flex; gap: 12px; align-items: end; flex-wrap: wrap;">
+    <div style="flex: 2; min-width: 220px;">
+      <label>Channel (avec #, casse respectée)</label>
+      <input type="text" name="channel" placeholder="#nouveau-chan" required>
+    </div>
+    <div style="flex: 2; min-width: 220px;">
+      <label>Cloner depuis (optionnel)</label>
+      <select name="clone_from">
+        <option value="">— defaults (tracelog ON, reste OFF) —</option>
+        {% for p in policies %}
+        <option value="{{ p.channel }}">{{ p.channel }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Créer</button>
+  </form>
+  <p class="muted" style="font-size: 12px; margin: 8px 0 0;">
+    Le clone copie tous les toggles, seuils, modèles LLM et notifs de la policy source.
+    Renommer une policy ne renomme pas l'historique (tracelog/bans/incidents restent avec l'ancien nom).
+  </p>
+</div>
+{% endblock %}

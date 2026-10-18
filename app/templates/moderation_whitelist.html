@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Modération — Whitelist{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .mask-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+  .row-add { display: grid; grid-template-columns: 3fr 1fr 2fr 1fr auto; gap: 10px; align-items: end; }
+  .help { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+  }
+  .badge.global { background: #3d2c14; color: #ffd8a8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Whitelist</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist" class="active">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Ajouter un mask whitelisté</h3>
+  <form method="post" action="/moderation/whitelist/add">
+    <div class="row-add">
+      <div>
+        <label>Mask (nick!ident@host avec wildcards)</label>
+        <input type="text" name="mask" placeholder="Bob*!*@*.trusted.isp.com" required>
+      </div>
+      <div>
+        <label>Channel</label>
+        <select name="channel">
+          <option value="*">— global —</option>
+          {% for p in policies %}
+          <option value="{{ p.channel }}">{{ p.channel }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Raison</label>
+        <input type="text" name="reason" placeholder="user connu de l'op">
+      </div>
+      <div>
+        <label>Ajouté par</label>
+        <input type="text" name="added_by" placeholder="webui" value="webui">
+      </div>
+      <button type="submit">Ajouter</button>
+    </div>
+    <p class="help">
+      Wildcards : <code>*</code> = 0 ou plus caractères, <code>?</code> = 1 caractère.
+      Exemples : <code>*!*@x-*.users.undernet.org</code>, <code>jose!*@*.fibrenoire.ca</code>, <code>Bob*!*@*</code>.
+    </p>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Whitelists actives ({{ rows|selectattr('active')|list|length }} sur {{ rows|length }})</h3>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Mask</th>
+        <th>Channel</th>
+        <th>Raison</th>
+        <th>Ajouté par</th>
+        <th>Le</th>
+        <th>Actif</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="mask-cell">{{ r.mask }}</td>
+        <td>
+          {% if r.channel %}
+          <span class="badge">{{ r.channel }}</span>
+          {% else %}
+          <span class="badge global">global</span>
+          {% endif %}
+        </td>
+        <td>{{ r.reason }}</td>
+        <td>{{ r.added_by }}</td>
+        <td><small class="muted">{{ r.added_at.strftime('%Y-%m-%d %H:%M') }}</small></td>
+        <td>{{ '✓' if r.active else '—' }}</td>
+        <td>
+          <form method="post" action="/moderation/whitelist/{{ r.id }}/delete" style="display: inline;">
+            <button type="submit" class="btn danger" onclick="return confirm('Supprimer ce mask ?')">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Aucun mask whitelisté. Ajoute au moins tes ops et users de confiance avant d'activer l'auto-ban.</p>
+  {% endif %}
+</div>
+{% endblock %}

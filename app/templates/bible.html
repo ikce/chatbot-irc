@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Bible{% endblock %}
+{% block content %}
+<h1>📖 Bible — verset à volonté</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Prise en compte immédiate (aucun redémarrage requis).</div>
+{% endif %}
+
+<p style="color: var(--muted); margin-top: 0;">
+  Commandes IRC : <code>!bible Jean 3:16</code>, <code>!bible-apo Prov 3:5-6</code>,
+  <code>!bible-meme Ecc 1:2</code>. Seuls les <strong>masks autorisés</strong> peuvent
+  déclencher. Le bot poste le passage dans les versions cochées ci-dessous, puis un
+  commentaire LLM selon le mode (apologète ou meme).
+</p>
+
+<!-- ============================================================ -->
+<!-- CONFIG GLOBALE                                                -->
+<!-- ============================================================ -->
+
+<form method="post" action="/bible/config">
+  <div class="card">
+    <h3 style="margin-top: 0;">Config globale</h3>
+    <div class="row">
+      <div>
+        <label>Versions activées (codes wldeh, JSON list)</label>
+        <input type="text" name="versions_enabled" value="{{ cfg.versions_enabled }}"
+               placeholder='["fr-lsg","en-kjv","en-web"]' required>
+        <small class="muted">
+          Codes disponibles : voir <a href="https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/bibles.json" target="_blank">bibles.json</a>.
+          Exemples : <code>fr-lsg</code> (Louis Segond 1910), <code>en-kjv</code>, <code>en-web</code>, <code>en-asv</code>, <code>en-bbe</code>.
+        </small>
+      </div>
+      <div>
+        <label>Préfixe commande</label>
+        <input type="text" name="command_prefix" value="{{ cfg.command_prefix }}" maxlength="3" required>
+        <small class="muted">Ex : <code>!</code>, <code>.</code>, <code>+</code>. Défaut <code>!</code>.</small>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Mode par défaut (si <code>!bible</code> sans variante)</label>
+        <select name="default_mode">
+          <option value="apologist" {% if cfg.default_mode == 'apologist' %}selected{% endif %}>apologist (défend le passage)</option>
+          <option value="meme" {% if cfg.default_mode == 'meme' %}selected{% endif %}>meme (shitpost moderne)</option>
+        </select>
+      </div>
+      <div>
+        <label>Cooldown par mask (secondes)</label>
+        <input type="number" step="0.5" name="throttle_per_mask_sec" value="{{ cfg.throttle_per_mask_sec }}">
+        <small class="muted">Cooldown global : <code>{{ cfg.throttle_global_sec }}</code>s (partagé avec les autres commandes bible).</small>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Cooldown global (secondes)</label>
+        <input type="number" step="0.5" name="throttle_global_sec" value="{{ cfg.throttle_global_sec }}">
+      </div>
+      <div style="align-self: end;">
+        <div class="checkbox">
+          <input type="checkbox" id="llm_commentary_enabled" name="llm_commentary_enabled"
+                 {% if cfg.llm_commentary_enabled %}checked{% endif %}>
+          <label for="llm_commentary_enabled" style="margin: 0;">Commentaire LLM après <code>!bible</code></label>
+        </div>
+        <div class="checkbox">
+          <input type="checkbox" id="llm_commentary_for_broadcast" name="llm_commentary_for_broadcast"
+                 {% if cfg.llm_commentary_for_broadcast %}checked{% endif %}>
+          <label for="llm_commentary_for_broadcast" style="margin: 0;">Commentaire LLM sur broadcast auto</label>
+        </div>
+      </div>
+    </div>
+
+    <label>System prompt — mode <strong>apologist</strong></label>
+    <textarea name="prompt_apologist" rows="4">{{ cfg.prompt_apologist }}</textarea>
+
+    <label>System prompt — mode <strong>meme</strong></label>
+    <textarea name="prompt_meme" rows="4">{{ cfg.prompt_meme }}</textarea>
+
+    <button type="submit" style="margin-top: 12px;">💾 Sauvegarder config</button>
+  </div>
+</form>
+
+<!-- ============================================================ -->
+<!-- ACL                                                           -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">Masks autorisés (ACL Bible)</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    ⚠️ L'accès à <code>!bible</code> se gère maintenant depuis
+    <a href="/users">/users</a> (flag <code>allow_bible</code> sur un
+    <code>UserAcl</code>). Cette page n'écrit plus dans la vérification
+    d'accès réelle — l'ancienne table ACL ci-dessous est conservée en lecture
+    seule pour référence historique uniquement.
+  </p>
+  {% if acls %}
+  <table style="margin-top: 12px;">
+    <thead>
+      <tr><th>ID</th><th>Mask</th><th>Raison</th><th>Par</th><th>Le</th><th>Actif</th></tr>
+    </thead>
+    <tbody>
+      {% for a in acls %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td><code>{{ a.mask }}</code></td>
+        <td>{{ a.reason }}</td>
+        <td>{{ a.added_by }}</td>
+        <td><small class="muted">{{ a.added_at.strftime('%Y-%m-%d %H:%M') if a.added_at else '—' }}</small></td>
+        <td>{% if a.active %}✅{% else %}⏸️{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<!-- ============================================================ -->
+<!-- BROADCASTS                                                    -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">Broadcasts récurrents</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Le bot poste automatiquement un verset dans le channel à intervalle régulier.
+    Coche un ou plusieurs modes ; si plusieurs sont actifs, le bot alterne
+    (round-robin) à chaque cycle. Aucun mode coché = broadcast désactivé.
+  </p>
+
+  <form method="post" action="/bible/broadcasts" style="margin-top: 12px;">
+    <div style="display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: end;">
+      <div>
+        <label>Channel</label>
+        <input type="text" name="channel" placeholder="#lab" required>
+      </div>
+      <div>
+        <label>Intervalle (minutes)</label>
+        <input type="number" name="interval_minutes" min="1" value="180">
+      </div>
+      <button type="submit">➕ Créer broadcast</button>
+    </div>
+  </form>
+
+  {% for bc in broadcasts %}
+  <form method="post" action="/bible/broadcasts/{{ bc.id }}" style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 12px;">
+      <strong style="font-size: 16px;">{{ bc.channel }}</strong>
+      <div class="checkbox" style="margin: 0;">
+        <input type="checkbox" id="active_{{ bc.id }}" name="active" {% if bc.active %}checked{% endif %}>
+        <label for="active_{{ bc.id }}" style="margin: 0;">actif</label>
+      </div>
+      <small class="muted">
+        dernier tick : {{ bc.last_run_at.strftime('%Y-%m-%d %H:%M UTC') if bc.last_run_at else 'jamais' }}
+      </small>
+      <div style="margin-left: auto;">
+        <button type="submit" class="btn">💾 Sauver</button>
+        <button type="submit" formaction="/bible/broadcasts/{{ bc.id }}/delete" formmethod="post"
+                class="btn danger" onclick="return confirm('Supprimer ce broadcast ?')">🗑</button>
+      </div>
+    </div>
+
+    <div class="row3">
+      <div>
+        <label>Intervalle (min)</label>
+        <input type="number" name="interval_minutes" min="1" value="{{ bc.interval_minutes }}">
+      </div>
+      <div>
+        <label>Versions override (JSON, vide = fallback global)</label>
+        <input type="text" name="versions_override" value="{{ bc.versions_override }}"
+               placeholder='["fr-lsg"]'>
+      </div>
+      <div>
+        <label>Filtre livres (JSON, vide = toute la Bible)</label>
+        <input type="text" name="books_filter" value="{{ bc.books_filter }}"
+               placeholder='["proverbs","ecclesiastes"]'>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 12px;">
+      <div class="checkbox">
+        <input type="checkbox" id="random_{{ bc.id }}" name="mode_random" {% if bc.mode_random %}checked{% endif %}>
+        <label for="random_{{ bc.id }}" style="margin: 0;">🎲 Random (livre+chapitre au hasard)</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="playlist_{{ bc.id }}" name="mode_playlist" {% if bc.mode_playlist %}checked{% endif %}>
+        <label for="playlist_{{ bc.id }}" style="margin: 0;">📃 Playlist (liste manuelle)</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="votd_{{ bc.id }}" name="mode_votd" {% if bc.mode_votd %}checked{% endif %}>
+        <label for="votd_{{ bc.id }}" style="margin: 0;">🌅 Verset du jour (deterministic seed)</label>
+      </div>
+    </div>
+
+    <label style="margin-top: 12px;">Playlist (JSON list de refs)</label>
+    <textarea name="playlist" rows="3" placeholder='["Prov 3:5-6","Ecc 1:2","Jean 3:16","Ps 23:1"]'>{{ bc.playlist }}</textarea>
+    <small class="muted">Cycle round-robin dans l'ordre. Position courante : {{ bc.playlist_cursor }}.</small>
+  </form>
+  {% else %}
+  <p style="color: var(--muted); margin-top: 20px;">Aucun broadcast configuré.</p>
+  {% endfor %}
+</div>
+{% endblock %}

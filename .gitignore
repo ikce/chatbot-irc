@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Venv
+.venv/
+venv/
+env/
+
+# Secrets — NE JAMAIS committer
+deploy/.env
+.env
+*.env.local
+
+# Data persistée SQLite (contient les logs + config utilisateur)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Données runtime du bot (DB SQLite, logs, config utilisateur)
+deploy/chatbot-data/
+chatbot-data/
+
+# Sauvegardes, archives et images Docker exportées
+.backups/
+*.zip
+*.tar
+*.tar.gz
+*.bak
+
+# Copies de livraison (doublons partiels de app/, la référence est app/)
+webfetch/
+
+# Toute variante de fichier d'env sauf l'exemple
+*.env
+.env.*
+!.env.example

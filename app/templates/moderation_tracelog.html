@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Modération — Tracelog{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tag {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
+  }
+  .tag.msg { background: #1a3a1a; color: #b5ffb5; }
+  .tag.join { background: #1a2a3a; color: #b5d8ff; }
+  .tag.part { background: #3a2a1a; color: #ffd8b5; }
+  .tag.quit { background: #3a1a1a; color: #ffb5b5; }
+  .tag.nick_change { background: #2a1a3a; color: #d8b5ff; }
+  .tag.notice { background: #1a3a2a; color: #b5ffd8; }
+  .ellipsis {
+    max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pager { display: flex; gap: 12px; margin-top: 16px; align-items: center; }
+  th.hint { font-weight: normal; color: var(--muted); font-size: 11px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Tracelog</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog" class="active">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+<div class="card">
+  <form method="get" action="/moderation/tracelog">
+    <div class="filters">
+      <div>
+        <label>Channel</label>
+        <select name="channel">
+          <option value="">— tous —</option>
+          {% for p in policies %}
+          <option value="{{ p.channel }}" {% if filters.channel == p.channel %}selected{% endif %}>{{ p.channel }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Nick</label>
+        <input type="text" name="nick" value="{{ filters.nick }}" placeholder="nick exact">
+      </div>
+      <div>
+        <label>IP</label>
+        <input type="text" name="ip" value="{{ filters.ip }}" placeholder="1.2.3.4">
+      </div>
+      <div>
+        <label>Type d'event</label>
+        <select name="event_type">
+          <option value="">— tous —</option>
+          {% for t in ['msg','join','part','quit','nick_change','notice'] %}
+          <option value="{{ t }}" {% if filters.event_type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Limite</label>
+        <input type="number" name="limit" value="{{ filters.limit }}" min="10" max="1000" step="50">
+      </div>
+      <button type="submit">Filtrer</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">{{ rows|length }} événements</h3>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Type</th>
+        <th>Chan</th>
+        <th>Nick</th>
+        <th class="hint">nick!ident@host</th>
+        <th>IP</th>
+        <th>Reverse</th>
+        <th>Context</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><small class="muted">{{ r.ts.strftime('%m-%d %H:%M:%S') }}</small></td>
+        <td><span class="tag {{ r.event_type }}">{{ r.event_type }}</span></td>
+        <td class="mono">{{ r.channel }}</td>
+        <td class="mono"><strong>{{ r.nick }}</strong></td>
+        <td class="mono"><small>{{ r.nick }}!{{ r.ident }}@{{ r.host }}</small></td>
+        <td class="mono">{{ r.ip or '—' }}</td>
+        <td class="mono"><small class="muted">{{ r.resolved_host or '—' }}</small></td>
+        <td class="ellipsis" title="{{ r.context }}">{{ r.context }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pager">
+    {% if prev_offset is not none %}
+      <a class="btn ghost" href="?channel={{ filters.channel }}&nick={{ filters.nick }}&ip={{ filters.ip }}&event_type={{ filters.event_type }}&limit={{ filters.limit }}&offset={{ prev_offset }}">← Précédents</a>
+    {% endif %}
+    <span class="muted">offset {{ filters.offset }}</span>
+    {% if next_offset is not none %}
+      <a class="btn ghost" href="?channel={{ filters.channel }}&nick={{ filters.nick }}&ip={{ filters.ip }}&event_type={{ filters.event_type }}&limit={{ filters.limit }}&offset={{ next_offset }}">Suivants →</a>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="muted">Aucune observation pour ces filtres.</p>
+  {% endif %}
+</div>
+{% endblock %}

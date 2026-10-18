@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}LLM{% endblock %}
+{% block content %}
+<h1>LLM (via OpenWebUI OpenAI-compat)</h1>
+<p style="color: var(--muted); margin-top: 0;">
+  Config LLM globale : endpoint, modèle, prompt persona, throttle, kill-switch
+  des features coûteuses. Le <strong>qui</strong> peut parler au bot (mask +
+  keyword) est piloté dans <a href="/users">/users</a>.
+</p>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Prise en compte immédiate (aucun redémarrage requis).</div>
+{% endif %}
+
+<form method="post" action="/llm">
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Endpoint LLM (racine OpenWebUI)</label>
+        <input type="text" name="llm_url" value="{{ cfg.llm_url }}" required
+               placeholder="https://openwebui.mondomaine.tld">
+        <small class="muted">Le code append <code>/api/chat/completions</code>.</small>
+      </div>
+      <div>
+        <label>API Key (Bearer)</label>
+        <input type="password" name="llm_api_key" value="{{ cfg.llm_api_key }}"
+               placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+      </div>
+    </div>
+    <div class="row3">
+      <div>
+        <label>Modèle</label>
+        <input type="text" name="model" value="{{ cfg.model }}" required>
+      </div>
+      <div>
+        <label>Max tokens (limite mots)</label>
+        <input type="number" name="max_tokens" value="{{ cfg.max_tokens }}" min="10" max="4000">
+      </div>
+      <div>
+        <label>Temperature</label>
+        <input type="number" name="temperature" step="0.05" min="0" max="2" value="{{ cfg.temperature }}">
+      </div>
+    </div>
+    <label>System prompt (persona du bot)</label>
+    <textarea name="system_prompt">{{ cfg.system_prompt }}</textarea>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Throttle</h3>
+    <div class="row">
+      <div>
+        <label>Cooldown global (secondes)</label>
+        <input type="number" step="0.5" name="throttle_global_sec" value="{{ cfg.throttle_global_sec }}">
+      </div>
+      <div>
+        <label>Cooldown par nick (secondes)</label>
+        <input type="number" step="0.5" name="throttle_per_nick_sec" value="{{ cfg.throttle_per_nick_sec }}">
+      </div>
+    </div>
+    <small class="muted">Le bot ne répondra pas si l'un des 2 timers n'est pas expiré.</small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Web search — kill-switch global</h3>
+    <div class="checkbox">
+      <input type="checkbox" id="web_search_enabled" name="web_search_enabled"
+             {% if cfg.web_search_enabled %}checked{% endif %}>
+      <label for="web_search_enabled" style="margin: 0;">
+        Autoriser la recherche web (feature <code>features.web_search</code>) au niveau bot
+      </label>
+    </div>
+    <small class="muted">
+      C'est un <strong>kill-switch</strong>. L'injection réelle dans le payload
+      requiert <em>en plus</em> que chaque user ait <strong>🌐 Web search</strong>
+      coché dans <a href="/users">/users</a>. Effectif = (kill-switch ON) ET
+      (opt-in per-user ON). OpenWebUI enrichit lui-même le contexte avant l'appel
+      au modèle — aucun appel HTTP séparé côté bot.
+    </small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Tools Open WebUI (lecture des liens)</h3>
+    <label>IDs des tools (séparés par des virgules)</label>
+    <input type="text" name="owui_tool_ids" placeholder="web_fetch"
+           value="{{ cfg.owui_tool_ids or '' }}">
+    <small class="muted">
+      Envoyés en <code>tool_ids</code> à Open WebUI quand un message adressé au bot
+      contient un lien et que son auteur a <strong>URL fetch</strong> coché dans
+      <a href="/users">/users</a> (admins compris). Pas pour les réponses spontanées
+      ni les au revoir. Vide = désactivé. Ex. <code>web_fetch</code> pour le tool
+      « Web Fetch + Vision ».
+    </small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Query intent (accès DB modération)</h3>
+    <div class="checkbox">
+      <input type="checkbox" id="query_intent_enabled" name="query_intent_enabled"
+             {% if cfg.query_intent_enabled %}checked{% endif %}>
+      <label for="query_intent_enabled" style="margin: 0;">
+        Le bot peut répondre en interrogeant la DB (tracelog, incidents, bans)
+      </label>
+    </div>
+    <small class="muted">
+      Flux 2-tours : (1) extraction d'intent JSON, (2) query DB, (3) reformulation via la persona.
+      Fallback silencieux sur le chat classique si l'intent est <code>chat</code> ou si l'extraction échoue.
+      Requêtes possibles : IP d'un nick, nicks d'une IP/host, first/last seen, stats bans/flags, top hosts.
+    </small>
+
+    <label style="margin-top: 14px;">Prompt d'extraction d'intent (vide = default hardcodé optimisé pour petits modèles)</label>
+    <textarea name="intent_extraction_prompt" rows="6"
+              placeholder="Laisse vide pour utiliser le default. Modifie si tu changes de modèle et que le format JSON casse.">{{ cfg.intent_extraction_prompt or '' }}</textarea>
+
+    <label style="margin-top: 8px;">Prompt d'humanisation (vide = utilise le system prompt persona ci-dessus)</label>
+    <textarea name="humanization_prompt" rows="4"
+              placeholder="Laisse vide pour hériter du system prompt.">{{ cfg.humanization_prompt or '' }}</textarea>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Mémoire long terme</h3>
+    <div class="checkbox">
+      <input type="checkbox" id="memory_enabled" name="memory_enabled"
+             {% if cfg.memory_enabled %}checked{% endif %}>
+      <label for="memory_enabled" style="margin: 0;">
+        Le bot reconnaît ses interlocuteurs et retient automatiquement des faits sur eux
+      </label>
+    </div>
+    <div class="row3" style="margin-top: 10px;">
+      <div>
+        <label>Modèle d'extraction (vide = modèle ci-dessus)</label>
+        <input type="text" name="memory_model" value="{{ cfg.memory_model or '' }}">
+      </div>
+      <div>
+        <label>Extraction toutes les N questions</label>
+        <input type="number" name="memory_extract_every" min="1" max="50"
+               value="{{ cfg.memory_extract_every or 6 }}">
+      </div>
+      <div>
+        <label>Lignes de contexte (chan/PV)</label>
+        <input type="number" name="memory_context_lines" min="0" max="50"
+               value="{{ cfg.memory_context_lines if cfg.memory_context_lines is not none else 12 }}">
+      </div>
+    </div>
+    <label style="margin-top: 10px;">Blacklist des faits (un mot ou une expression par ligne)</label>
+    <textarea name="memory_blacklist" rows="5"
+              placeholder="insulte&#10;/\b(nazi|pédo)\w*/&#10;# les lignes # sont des commentaires">{{ cfg.memory_blacklist or '' }}</textarea>
+    <small class="muted" style="display: block; margin-bottom: 8px;">
+      Comparé sans majuscules ni accents ; <code>/regex/</code> pour une expression régulière.
+      Un fait qui matche est refusé, qu'il vienne de <code>!mem add/pub/about</code> ou de
+      l'extraction automatique. Les faits déjà retenus ne sont pas effacés.
+    </small>
+    <small class="muted">
+      Identité : compte NickServ &gt; ident@host &gt; nick + même FAI/ident. Un nick
+      seul sur une connexion inconnue n'a accès qu'aux faits publics et n'écrit rien.
+      Faits appris en PV = privés (jamais injectés en channel). L'extraction se fait
+      aussi après 5 min de silence. Côté users : <code>!mem list|forget|off|who</code> en PV.
+    </small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Réponses spontanées</h3>
+    <div class="row3">
+      <div>
+        <label>Channels (séparés par des virgules, vide = désactivé)</label>
+        <input type="text" name="autonomous_channels" value="{{ cfg.autonomous_channels or '' }}"
+               placeholder="#lab, #blabla">
+      </div>
+      <div>
+        <label>Modèle juge (vide = modèle d'extraction, puis principal)</label>
+        <input type="text" name="autonomous_model" value="{{ cfg.autonomous_model or '' }}"
+               placeholder="qwen2.5:3b">
+      </div>
+      <div>
+        <label>Délai mini entre interventions (s)</label>
+        <input type="number" step="10" min="0" name="autonomous_cooldown_sec"
+               value="{{ cfg.autonomous_cooldown_sec if cfg.autonomous_cooldown_sec is not none else 300 }}">
+      </div>
+    </div>
+    <small class="muted">
+      Dans ces channels, le bot peut répondre sans être mentionné : quand quelqu'un
+      continue une conversation avec lui (3 min), ou quand une question est posée
+      au channel (au plus une fois par délai ci-dessus). Un petit modèle « juge »
+      décide à chaque fois, et chaque décision s'affiche dans la console
+      (<code>[auto]</code>). Seuls les users avec 💬 LLM chat sont concernés ; le
+      throttle habituel s'applique aussi.
+    </small>
+    <div class="row" style="margin-top: 14px;">
+      <div>
+        <label>Au revoir spontané : channels (<code>*</code> = tous, vide = désactivé)</label>
+        <input type="text" name="farewell_channels"
+               value="{{ cfg.farewell_channels if cfg.farewell_channels is not none else '*' }}"
+               placeholder="*">
+      </div>
+      <div></div>
+    </div>
+    <small class="muted">
+      Quand quelqu'un annonce qu'il part (« bonne nuit », « j'y vais », « a+ »…), le
+      bot lui dit au revoir sans être mentionné. Le modèle juge confirme d'abord que
+      c'est vraiment un départ (console : <code>[bye]</code>). Marche pour tout le
+      monde, une fois par personne et par channel toutes les 30 min.
+    </small>
+    <div class="row" style="margin-top: 14px;">
+      <div>
+        <label>Ignore automatique (minutes, 0 = désactivé)</label>
+        <input type="number" min="0" max="1440" name="auto_ignore_minutes"
+               value="{{ cfg.auto_ignore_minutes if cfg.auto_ignore_minutes is not none else 30 }}">
+      </div>
+      <div></div>
+    </div>
+    <small class="muted">
+      Le bot ignore quelqu'un pendant cette durée s'il pose 3 fois la même question en
+      10 min, ou si le LLM juge qu'il insiste après un refus (il termine alors sa
+      réponse par <code>[IGNORE]</code>, retiré avant envoi). Nick et ident@host sont
+      ignorés tous les deux. Admins jamais ignorés ; <code>!unignore &lt;nick&gt;</code>
+      pour lever. Un redémarrage du bot lève tous les ignores.
+    </small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Aperçu des liens</h3>
+    <div class="row">
+      <div>
+        <label><input type="checkbox" name="url_enabled" {% if ui.enabled %}checked{% endif %}>
+          Aperçu des liens actif</label>
+      </div>
+      <div>
+        <label>Liens max par message</label>
+        <input type="number" min="0" max="10" name="url_max_urls" value="{{ ui.max_urls_per_message }}">
+      </div>
+    </div>
+    <label>Ligne titre (pages web)</label>
+    <input type="text" name="url_link_format" value="{{ fmt.link_format }}">
+    <label>Ligne description (pages web, vide = pas de 2e ligne)</label>
+    <input type="text" name="url_desc_format" value="{{ fmt.desc_format }}">
+    <label>Ligne titre (YouTube)</label>
+    <input type="text" name="url_yt_format" value="{{ fmt.yt_format }}">
+    <label>Ligne description (YouTube, vide = pas de 2e ligne)</label>
+    <input type="text" name="url_yt_desc_format" value="{{ fmt.yt_desc_format }}">
+    <small class="muted">
+      Variables : <code>{title}</code> <code>{site}</code> <code>{description}</code>
+      <code>{domain}</code> <code>{url}</code>, et pour YouTube <code>{channel}</code>
+      <code>{duration}</code> <code>{views}</code> <code>{likes}</code> <code>{date}</code>.
+      Un bloc <code>[[ … ]]</code> ne s'affiche que si ses variables sont remplies, par ex.
+      <code>[[ — {site}]]</code>. Ligne titre vide = rien de posté pour ce type de lien.
+      Qui déclenche l'aperçu : le flag 🔗 URL fetch dans /users, admins compris.
+      Les changements s'appliquent tout de suite, même aux liens en cache.
+    </small>
+  </div>
+
+  <button type="submit">💾 Sauvegarder</button>
+</form>
+
+<div class="card" style="margin-top: 28px; border-left: 3px solid var(--accent);">
+  <h3 style="margin-top: 0;">Triggers migrés vers /users</h3>
+  <p style="color: var(--muted); margin: 0;">
+    La table de triggers séparée n'existe plus. Chaque user porte désormais son
+    propre <strong>keyword</strong> (vide = mention du nick du bot ou PV) directement
+    dans la page <a href="/users">/users</a>, à côté de la checkbox
+    <strong>💬 LLM chat</strong>. Un user sans <strong>💬 LLM chat</strong> ne
+    déclenchera jamais le bot, même si son keyword matche.
+  </p>
+</div>
+{% endblock %}

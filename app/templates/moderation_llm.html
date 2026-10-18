@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Modération — LLM{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+  }
+  .badge.v-normal { background: #1a3a1a; color: #b5ffb5; }
+  .badge.v-toxic { background: #3a2a1a; color: #ffd8b5; }
+  .badge.v-spam { background: #2a3a1a; color: #d8ffb5; }
+  .badge.v-phone,
+  .badge.v-address,
+  .badge.v-credit_card,
+  .badge.v-social_id { background: #3a2a1a; color: #ffd8b5; }
+  .badge.v-minor_content { background: #5a1010; color: #ffb5b5; }
+  .badge.v-proxy_hint { background: #2a1a3a; color: #d8b5ff; }
+  .msg-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conf-bar {
+    display: inline-block; width: 40px; height: 6px; background: var(--border); border-radius: 3px;
+    vertical-align: middle; overflow: hidden;
+  }
+  .conf-bar > span { display: block; height: 100%; background: #4c9eff; }
+  .filter-nav a {
+    color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 4px;
+    margin-right: 4px; font-size: 12px;
+  }
+  .filter-nav a.active { background: var(--border); color: var(--fg); }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — LLM Classifier</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm" class="active">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Configuration sauvegardée.</div>
+{% endif %}
+
+<div class="banner-info">
+  <strong>Phase 3 — Classifier LLM.</strong> Chaque message d'un chan avec <code>llm_moderation_enabled</code>
+  est classé par le modèle défini (par chan ou global). Le verdict alimente les décisions dry-run.
+  Utilise un modèle petit et rapide (<code>qwen2.5:3b</code>, <code>llama3.2:3b</code>) pour éviter d'exploser le budget compute.
+</div>
+
+<form method="post" action="/moderation/llm/save" class="card">
+  <h3 style="margin-top: 0;">Configuration</h3>
+
+  <div style="margin-bottom: 12px;">
+    <label>System prompt (JSON strict imposé)</label>
+    <textarea name="system_prompt" rows="10" style="width:100%; font-family: ui-monospace, monospace; font-size: 12px;">{{ cfg.system_prompt }}</textarea>
+    <p style="font-size:12px; color:var(--muted); margin-top:4px;">
+      Le classifier attend une réponse JSON <code>{"verdict":"…","confidence":0-1,"rationale":"…"}</code>.
+      Labels acceptés : <code>normal, toxic, phone, address, minor_content, credit_card, social_id, spam, proxy_hint</code>.
+    </p>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Modèle par défaut (fallback)</label>
+      <input type="text" name="default_model" value="{{ cfg.default_model }}" placeholder="qwen2.5:3b">
+    </div>
+    <div>
+      <label>Timeout (sec)</label>
+      <input type="number" name="timeout_sec" value="{{ cfg.timeout_sec }}" step="0.5" min="1">
+    </div>
+    <div>
+      <label>Sample rate (0-1)</label>
+      <input type="number" name="sample_rate" value="{{ cfg.sample_rate }}" step="0.01" min="0" max="1">
+      <p style="font-size:11px; color:var(--muted);">Fraction de messages non-flag envoyés au LLM en veille passive</p>
+    </div>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Longueur min message (chars)</label>
+      <input type="number" name="min_message_len" value="{{ cfg.min_message_len }}" min="1">
+    </div>
+    <div>
+      <label>Longueur max envoyée au LLM</label>
+      <input type="number" name="max_message_len" value="{{ cfg.max_message_len }}" min="50">
+    </div>
+    <div>
+      <label>Throttle per-nick (sec)</label>
+      <input type="number" name="throttle_per_nick_sec" value="{{ cfg.throttle_per_nick_sec }}" step="0.5" min="0">
+    </div>
+  </div>
+
+  <div class="row2">
+    <div>
+      <label>Throttle global (sec)</label>
+      <input type="number" name="throttle_global_sec" value="{{ cfg.throttle_global_sec }}" step="0.1" min="0">
+    </div>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <button type="submit">Sauvegarder</button>
+  </div>
+</form>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Décisions LLM récentes</h3>
+  <div class="filter-nav" style="margin-bottom: 8px;">
+    <a href="/moderation/llm" class="{% if not filter_verdict %}active{% endif %}">tous</a>
+    {% for v in ['normal','toxic','phone','address','minor_content','credit_card','social_id','spam','proxy_hint'] %}
+    <a href="/moderation/llm?verdict={{ v }}" class="{% if filter_verdict == v %}active{% endif %}">{{ v }}</a>
+    {% endfor %}
+  </div>
+  {% if logs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Chan</th>
+        <th>Nick</th>
+        <th>Verdict</th>
+        <th>Conf.</th>
+        <th>Message</th>
+        <th>Modèle</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in logs %}
+      <tr>
+        <td><small class="muted">{{ l.ts.strftime('%m-%d %H:%M:%S') }}</small></td>
+        <td class="mono">{{ l.channel }}</td>
+        <td class="mono"><strong>{{ l.nick }}</strong></td>
+        <td><span class="badge v-{{ l.verdict }}">{{ l.verdict }}</span></td>
+        <td>
+          <span class="conf-bar"><span style="width: {{ (l.confidence * 100)|int }}%;"></span></span>
+          <small>{{ '%.2f' % l.confidence }}</small>
+        </td>
+        <td class="mono msg-cell" title="{{ l.message }}">{{ l.message }}</td>
+        <td class="mono"><small>{{ l.model_used }}</small></td>
+        <td><small class="muted">{{ l.action_taken }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Aucune décision loggée. Active <code>llm_moderation_enabled</code> sur au moins un chan.</p>
+  {% endif %}
+</div>
+{% endblock %}

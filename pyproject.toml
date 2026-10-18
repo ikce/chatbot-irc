@@ -1,0 +1,23 @@
+[project]
+name = "chatbot-irc"
+version = "0.1.0"
+description = "Chatter bot IRC branché sur Ollama + OpenWebUI, exposé via une WebUI FastAPI"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydle>=1.0,<2",
+    "sqlmodel>=0.0.22,<0.0.45",  # 0.0.45+ refuse les datetime naïfs (utcnow)
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "python-multipart>=0.0.12",
+    "pydantic-settings>=2.6",
+    "dnspython>=2.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Image gen{% endblock %}
+{% block content %}
+<h1>🎨 Image gen &amp; Immich share</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Prise en compte immédiate.</div>
+{% endif %}
+
+<p style="color: var(--muted); margin-top: 0;">
+  Deux surfaces d'entrée qui tapent le même moteur :<br>
+  &nbsp;&nbsp;<strong>Command</strong> — <code>{{ command_prefix }}img &lt;description&gt;</code>, prompt RAW envoyé tel quel.<br>
+  &nbsp;&nbsp;<strong>Natural</strong> — "hey bot, fais-moi une image de X" (via query_intent).
+</p>
+<p style="color: var(--muted); margin-top: 0;">
+  <strong>Pipeline</strong> : OpenWebUI <code>/api/v1/images/generations</code> (reuse
+  <code>llm_url</code> + <code>llm_api_key</code>) → download bytes → Immich upload
+  → Immich share link → URL postée en IRC.<br>
+  ACL : flag <code>allow_image_gen</code> sur UserAcl (page <a href="/users">/users</a>).
+</p>
+
+<form method="post" action="/images">
+  <div class="card">
+    <h3 style="margin-top: 0;">Kill-switch &amp; OpenWebUI</h3>
+    <div class="checkbox">
+      <input type="checkbox" id="enabled" name="enabled" {% if cfg.enabled %}checked{% endif %}>
+      <label for="enabled" style="margin: 0;">Activé (feature globale)</label>
+    </div>
+    <div class="row3" style="margin-top: 12px;">
+      <div>
+        <label>Model (vide = default OpenWebUI)</label>
+        <input type="text" name="model" value="{{ cfg.model }}" placeholder="dall-e-3, flux, sdxl...">
+      </div>
+      <div>
+        <label>Size</label>
+        <input type="text" name="size" value="{{ cfg.size }}" placeholder="1024x1024">
+      </div>
+      <div>
+        <label>N images / requête</label>
+        <input type="number" name="n" value="{{ cfg.n }}" min="1" max="4">
+      </div>
+    </div>
+    <label>Timeout fetch (s) — image gen est LENT (30s–3min normal)</label>
+    <input type="number" name="fetch_timeout_sec" value="{{ cfg.fetch_timeout_sec }}" step="10" min="30">
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Immich</h3>
+    <p style="color: var(--muted); margin-top: 0;">
+      Instance self-hosted. Le bot upload l'image générée, crée un share link
+      individuel avec download activé, poste l'URL en IRC.
+    </p>
+    <div class="row">
+      <div>
+        <label>Immich URL</label>
+        <input type="text" name="immich_url" value="{{ cfg.immich_url }}" placeholder="https://immich.example.com">
+      </div>
+      <div>
+        <label>Immich API key</label>
+        <input type="password" name="immich_api_key" value="{{ cfg.immich_api_key }}" placeholder="généré dans Immich Settings → API Keys">
+      </div>
+    </div>
+    <label>Share expiry (heures — 0 = permanent)</label>
+    <input type="number" name="share_expiry_hours" value="{{ cfg.share_expiry_hours }}" min="0" max="8760" style="width: 200px;">
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Anti-abuse</h3>
+    <div class="row">
+      <div>
+        <label>Max concurrent (semaphore global)</label>
+        <input type="number" name="max_concurrent" value="{{ cfg.max_concurrent }}" min="1" max="8">
+      </div>
+      <div>
+        <label>Throttle per nick (secondes)</label>
+        <input type="number" name="throttle_per_nick_sec" value="{{ cfg.throttle_per_nick_sec }}" step="10" min="0">
+      </div>
+    </div>
+  </div>
+
+  <button type="submit">💾 Sauvegarder</button>
+  <small class="muted" style="margin-left: 12px;">Prise en compte immédiate — pas de restart IRC nécessaire.</small>
+</form>
+{% endblock %}

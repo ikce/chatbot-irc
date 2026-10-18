@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Commandes IRC{% endblock %}
+{% block content %}
+<h1>📘 Commandes IRC — cheatsheet</h1>
+
+<p style="color: var(--muted); margin-top: 0;">
+  Toutes les commandes utilisent le préfixe configuré dans <a href="/">/</a> —
+  actuellement <code>{{ prefix }}</code>. Chaque commande vérifie une permission
+  du user (flag <code>allow_*</code> dans <a href="/users">/users</a>) — un user
+  sans le flag correspondant est silencieusement refusé.
+</p>
+
+<!-- ============================================================ -->
+<!-- DÉCLENCHEUR LLM                                                -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">💬 Chat LLM (déclencheur par mask + keyword)</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Le bot ne parle jamais tout seul. Il répond quand :
+  </p>
+  <ol style="color: var(--muted);">
+    <li>Le mask du user matche un <code>UserAcl</code> actif dans <a href="/users">/users</a> ;</li>
+    <li>Ce user a la checkbox <strong>💬 LLM chat</strong> cochée (ou est <strong>👑 Admin</strong>) ;</li>
+    <li>Le <strong>keyword</strong> du user matche : soit substring dans le message,
+        soit — si le keyword est vide — le nick du bot est mentionné dans le
+        message OU le message arrive en PV.</li>
+  </ol>
+  <p style="color: var(--muted);">
+    Web search : effectif seulement si le <em>kill-switch global</em> (<a href="/llm">/llm</a>)
+    ET le flag per-user <strong>🌐 Web search</strong> sont tous deux ON.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- COMMANDES ADMIN                                                -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">👑 Admin (flag <code>is_admin</code>)</h3>
+  <table>
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}add user &lt;mask&gt; [note...]</code></td>
+          <td>Crée un <code>UserAcl</code> avec tous les flags OFF. À cocher via <a href="/users">/users</a>.</td></tr>
+      <tr><td><code>{{ prefix }}del user &lt;mask&gt;</code></td>
+          <td>Supprime un user (mask exact requis, refuse les admins).</td></tr>
+      <tr><td><code>{{ prefix }}list users</code></td>
+          <td>Liste en PM les users enregistrés + flags cochés + keyword.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- BIBLE                                                          -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">📖 Bible (flag <code>allow_bible</code>)</h3>
+  <table>
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}bible &lt;livre&gt; &lt;chap:verset&gt;</code></td>
+          <td>Verset canonique (ex : <code>{{ prefix }}bible Jean 3:16</code>).</td></tr>
+      <tr><td><code>{{ prefix }}bible-apo &lt;livre&gt; &lt;chap:verset&gt;</code></td>
+          <td>Version « apologiste » (persona alternative).</td></tr>
+      <tr><td><code>{{ prefix }}bible-meme &lt;livre&gt; &lt;chap:verset&gt;</code></td>
+          <td>Version shitpost.</td></tr>
+    </tbody>
+  </table>
+  <p style="color: var(--muted); margin: 0;">
+    Config broadcast automatique (verset du jour dans un chan) : <a href="/bible">/bible</a>.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- INTEL                                                          -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">🕵️ Intel (flag <code>allow_intel</code>)</h3>
+  <table>
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}flag &lt;ip|host&gt;</code></td>
+          <td>Nombre d'incidents, types, dernier vu, ban actif ?</td></tr>
+      <tr><td><code>{{ prefix }}ip &lt;ip&gt;</code></td>
+          <td>Dossier complet : annotation + AbuseIPDB + Spamhaus + local (humanisé LLM).</td></tr>
+      <tr><td><code>{{ prefix }}seen &lt;nick&gt;</code></td>
+          <td>Première/dernière observation, chans, nb events.</td></tr>
+      <tr><td><code>{{ prefix }}host &lt;host&gt;</code></td>
+          <td>Nb nicks distincts, IPs, dernière activité.</td></tr>
+      <tr><td><code>{{ prefix }}topflag [#chan]</code></td>
+          <td>Top 5 des nicks les plus flaggés (30j).</td></tr>
+    </tbody>
+  </table>
+  <p style="color: var(--muted); margin: 0;">
+    Annotations IP + éditeur de commandes : <a href="/intel">/intel</a>.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- IMAGE GEN                                                      -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">🎨 Image gen (flag <code>allow_image_gen</code>)</h3>
+  <table>
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}img &lt;description&gt;</code></td>
+          <td>Génère une image via OpenWebUI, upload sur Immich, retourne le lien de partage.</td></tr>
+    </tbody>
+  </table>
+  <p style="color: var(--muted); margin: 0;">
+    Config prompt + Immich : <a href="/images">/images</a>. Le bot capte aussi les
+    requêtes en langage naturel type « fais-moi une image de ... ».
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- PV MEMORY                                                      -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">🧠 Mémoire PV (flag <code>allow_llm_chat</code>)</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Toggle par user (case-insensitive sur le nick) — quand actif ET en PM, le
+    bot injecte les N derniers tours de la conversation dans le contexte LLM.
+  </p>
+  <table>
+    <thead><tr><th>Commande (PM au bot)</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}pv on</code></td>
+          <td>Active la mémoire persistante pour ce nick.</td></tr>
+      <tr><td><code>{{ prefix }}pv off</code></td>
+          <td>Désactive (garde l'historique).</td></tr>
+      <tr><td><code>{{ prefix }}pv clear</code></td>
+          <td>Efface l'historique (garde le toggle).</td></tr>
+      <tr><td><code>{{ prefix }}pv reset</code></td>
+          <td>Efface + désactive.</td></tr>
+      <tr><td><code>{{ prefix }}pv status</code></td>
+          <td>Info : on/off, nb messages, dernière activité.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">📌 Mémoire long terme (flag <code>allow_llm_chat</code>)</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Automatique : le bot reconnaît la personne (compte NickServ, sinon
+    ident@host, sinon nick + même FAI/ident) et retient tout seul des faits
+    durables au fil des conversations. Faits appris en PV = privés (jamais
+    utilisés en channel). Stockés dans la base du bot, max 60 par personne.
+    Les faits contenant un terme de la blacklist (page LLM) sont refusés.
+  </p>
+  <table>
+    <thead><tr><th>Commande (PM au bot)</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}mem list</code></td>
+          <td>Liste ce que le bot sait de toi (🔒 privé, 👥 public).</td></tr>
+      <tr><td><code>{{ prefix }}mem add &lt;fait&gt;</code></td>
+          <td>Retient un fait sur toi, privé (utilisé en PV seulement).</td></tr>
+      <tr><td><code>{{ prefix }}mem pub &lt;fait&gt;</code></td>
+          <td>Retient un fait public sur toi (utilisable en channel).</td></tr>
+      <tr><td><code>{{ prefix }}mem about &lt;nick&gt; &lt;fait&gt;</code></td>
+          <td>Ajoute un fait public sur quelqu'un de connecté. Signé de ton nick,
+              la personne le voit dans son <code>list</code> et peut l'effacer.
+              Max 5 par auteur et par personne.</td></tr>
+      <tr><td><code>{{ prefix }}mem lock</code> / <code>unlock</code></td>
+          <td>Refuse / accepte les faits ajoutés sur toi par d'autres.</td></tr>
+      <tr><td><code>{{ prefix }}mem forget &lt;n|all&gt;</code></td>
+          <td>Oublie le fait n° n, ou tout.</td></tr>
+      <tr><td><code>{{ prefix }}mem off</code> / <code>on</code></td>
+          <td>Coupe / réactive la mémoire automatique pour toi.</td></tr>
+      <tr><td><code>{{ prefix }}mem who</code></td>
+          <td>Comment le bot t'a reconnu, nicks connus.</td></tr>
+      <tr><td><code>{{ prefix }}mem import</code></td>
+          <td>Reprend tes anciens faits stockés dans OpenWebUI.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">👋 Au revoir spontané</h3>
+  <p style="color: var(--muted); margin: 0;">
+    Passif, sans commande. Quand quelqu'un annonce qu'il quitte le chat (« bonne nuit »,
+    « j'y vais », « a+ », « gtg »…), le bot lui dit au revoir sans être mentionné, après
+    confirmation par le modèle juge. Une fois par personne et par channel toutes les
+    30 min. Channels réglables dans la page LLM (<code>*</code> = tous).
+  </p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">🙄 Ignore automatique</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Le bot ignore quelqu'un pendant un temps (réglable, page LLM) s'il pose 3 fois
+    la même question en 10 min ou s'il insiste après un refus. Les admins ne sont
+    jamais ignorés.
+  </p>
+  <table>
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ prefix }}unignore &lt;nick&gt;</code></td>
+          <td>(admin) Lève l'ignore de ce nick.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- CUSTOM COMMANDS                                                -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">⚡ Custom commands (flag <code>allow_custom_commands</code>)</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Toute commande définie via <a href="/intel">/intel</a> qui n'est pas dans la
+    liste Intel seed ci-dessus. Éditeur regex ou mode simple, template de sortie,
+    optionnellement humanisée par le LLM. La liste ci-dessous vient de la DB en direct :
+  </p>
+  {% if custom_commands %}
+  <table>
+    <thead><tr><th>Nom</th><th>Description</th><th>Actif</th></tr></thead>
+    <tbody>
+      {% for c in custom_commands %}
+      <tr>
+        <td><code>{{ prefix }}{{ c.name }}</code></td>
+        <td>{{ c.description or '—' }}</td>
+        <td>{% if c.active %}✅{% else %}⏸️{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--muted);">Aucune commande custom configurée.</p>
+  {% endif %}
+</div>
+
+<!-- ============================================================ -->
+<!-- URL FETCH                                                      -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">🔗 URL fetch (flag <code>allow_url_fetch</code>)</h3>
+  <p style="color: var(--muted); margin: 0;">
+    Passif — pas de commande explicite. Quand un user autorisé poste une URL
+    dans un chan, le bot fetch le HTML et répond en 1 à 2 lignes : titre + nom
+    du site (OpenGraph ou <code>&lt;title&gt;</code>), puis la description
+    (<code>og:description</code> / <code>meta description</code>).
+  </p>
+  <p style="color: var(--muted); margin: 8px 0 0;">
+    Liens YouTube (<code>watch</code>, <code>youtu.be</code>, <code>shorts</code>,
+    <code>live</code>) : titre, chaîne, durée (ou 🔴 EN DIRECT), vues, likes,
+    date de publication, puis le début de la description de la vidéo.
+  </p>
+  <p style="color: var(--muted); margin: 8px 0 0;">
+    Le format des lignes se règle dans la page LLM, carte « Aperçu des liens ».
+    Les admins suivent la même règle : sans le flag 🔗, pas d'aperçu sur leurs liens.
+  </p>
+</div>
+
+<p style="color: var(--muted); margin-top: 24px;">
+  <em>Cette page est générée à partir de la config live. Les commandes custom
+  reflètent la DB en direct.</em>
+</p>
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h1>👥 Users — ACL granulaire</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Prise en compte immédiate.</div>
+{% endif %}
+{% if request.query_params.get('added') %}
+<div class="toast">User ajouté. Coche les flags qu'il a le droit d'utiliser.</div>
+{% endif %}
+
+<p style="color: var(--muted); margin-top: 0;">
+  Chaque ligne = un <code>mask</code> IRC (nick!ident@host) avec des wildcards
+  <code>*</code> et <code>?</code>. Coches = permissions accordées. Un user
+  ajouté depuis IRC (<code>{{ command_prefix }}add user &lt;mask&gt;</code>) arrive
+  <strong>avec tous les flags décochés</strong> — tu choisis ici ce qu'il peut faire.
+</p>
+<p style="color: var(--muted); margin-top: 0;">
+  <strong>Keyword LLM</strong> : mot-clé qui déclenche la réponse du bot pour ce user.
+  Vide = le bot répond quand son nick est mentionné dans le message OU en PV. Rempli =
+  match substring case-insensitive (ex: <code>pizza</code> répond à « qui veut de la pizza »).
+  <br>
+  <strong>🌐 Web search</strong> : opt-in per-user, requiert aussi le kill-switch global ON dans <a href="/llm">/llm</a>.
+</p>
+<p style="color: var(--muted); margin-top: 0;">
+  <strong>Wildcards utiles</strong> :<br>
+  &nbsp;&nbsp;<code>Bob!*@*</code> — tout ce qui provient du nick Bob<br>
+  &nbsp;&nbsp;<code>*!*@*.videotron.ca</code> — tous les users d'un domaine (accès par host, no nick needed)<br>
+  &nbsp;&nbsp;<code>*!~<em>ident</em>@*</code> — tous les users avec un ident précis
+</p>
+
+<!-- ============================================================ -->
+<!-- FORMULAIRE D'AJOUT                                            -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">➕ Ajouter un user</h3>
+  <form method="post" action="/users">
+    <div class="row">
+      <div>
+        <label>Mask (nick!ident@host, wildcards OK)</label>
+        <input type="text" name="mask" placeholder="Bob!*@*.example.com" required>
+      </div>
+      <div>
+        <label>Note (optionnelle)</label>
+        <input type="text" name="note" placeholder="ex: op de #lab, ami de longue date">
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 12px; align-items: end;">
+      <div>
+        <label>Ajouté par</label>
+        <input type="text" name="added_by" value="webui">
+      </div>
+      <button type="submit">➕ Ajouter (tous flags OFF)</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============================================================ -->
+<!-- LISTE DES USERS                                               -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">Users enregistrés ({{ users|length }})</h3>
+
+  {% if not users %}
+  <p style="color: var(--muted);">Aucun user — ajoute le premier via le formulaire ci-dessus, ou depuis IRC avec
+  <code>{{ command_prefix }}add user &lt;mask&gt;</code>.</p>
+  {% endif %}
+
+  {% for u in users %}
+  <form method="post" action="/users/{{ u.id }}" style="margin-top: {% if not loop.first %}24px{% else %}0{% endif %}; {% if not loop.first %}border-top: 1px solid var(--border); padding-top: 20px;{% endif %}">
+    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap;">
+      <code style="font-size: 15px; color: var(--fg);">{{ u.mask }}</code>
+      {% if u.is_admin %}<span style="background: var(--accent); color: #0b0d12; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;">ADMIN</span>{% endif %}
+      {% if not u.active %}<span style="background: var(--err); color: #0b0d12; padding: 2px 8px; border-radius: 4px; font-size: 11px;">DÉSACTIVÉ</span>{% endif %}
+      <small class="muted">
+        ajouté par {{ u.added_by }}
+        {% if u.added_at %}le {{ u.added_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+      </small>
+      <div style="margin-left: auto;">
+        <button type="submit" class="btn">💾 Sauver</button>
+        <button type="submit" formaction="/users/{{ u.id }}/delete" formmethod="post"
+                class="btn danger" onclick="return confirm('Supprimer le user {{ u.mask }} ?')">🗑</button>
+      </div>
+    </div>
+
+    <div class="row3">
+      <div>
+        <label>Mask</label>
+        <input type="text" name="mask" value="{{ u.mask }}" required>
+      </div>
+      <div>
+        <label>Note</label>
+        <input type="text" name="note" value="{{ u.note or '' }}">
+      </div>
+      <div>
+        <label>Keyword LLM (vide = mention/PV)</label>
+        <input type="text" name="keyword" value="{{ u.keyword or '' }}" placeholder="ex: bibi, pizza…">
+      </div>
+    </div>
+
+    <label style="margin-top: 16px;">Permissions</label>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 20px; margin-top: 6px;">
+      <div class="checkbox">
+        <input type="checkbox" name="active" id="u{{ u.id }}_active" {% if u.active %}checked{% endif %}>
+        <label for="u{{ u.id }}_active" style="margin:0;" title="Kill-switch global : décoché = ignore tous les autres flags">✅ Actif</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="is_admin" id="u{{ u.id }}_admin" {% if u.is_admin %}checked{% endif %}>
+        <label for="u{{ u.id }}_admin" style="margin:0;" title="Peut {{ command_prefix }}add / {{ command_prefix }}del / {{ command_prefix }}list users depuis IRC + bypass toutes les ACL">👑 Admin</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_llm_chat" id="u{{ u.id }}_llm" {% if u.allow_llm_chat %}checked{% endif %}>
+        <label for="u{{ u.id }}_llm" style="margin:0;" title="Peut trigger le LLM chat classique (mask+keyword/mention)">💬 LLM chat</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_web_search" id="u{{ u.id }}_ws" {% if u.allow_web_search %}checked{% endif %}>
+        <label for="u{{ u.id }}_ws" style="margin:0;" title="Injecte features.web_search dans le payload OpenWebUI (kill-switch global doit aussi être ON dans /llm)">🌐 Web search</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_query_intent" id="u{{ u.id }}_qi" {% if u.allow_query_intent %}checked{% endif %}>
+        <label for="u{{ u.id }}_qi" style="margin:0;" title="Peut poser des questions sur la DB modération en langage naturel">🔍 Query intent</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_bible" id="u{{ u.id }}_bible" {% if u.allow_bible %}checked{% endif %}>
+        <label for="u{{ u.id }}_bible" style="margin:0;" title="{{ command_prefix }}bible / {{ command_prefix }}bible-apo / {{ command_prefix }}bible-meme">📖 Bible</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_intel" id="u{{ u.id }}_intel" {% if u.allow_intel %}checked{% endif %}>
+        <label for="u{{ u.id }}_intel" style="margin:0;" title="{{ command_prefix }}flag / {{ command_prefix }}ip / {{ command_prefix }}seen / {{ command_prefix }}host / {{ command_prefix }}topflag">🕵️ Intel</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_custom_commands" id="u{{ u.id }}_cc" {% if u.allow_custom_commands %}checked{% endif %}>
+        <label for="u{{ u.id }}_cc" style="margin:0;" title="Toute autre commande custom hors intel seed">⚡ Custom commands</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_url_fetch" id="u{{ u.id }}_url" {% if u.allow_url_fetch %}checked{% endif %}>
+        <label for="u{{ u.id }}_url" style="margin:0;" title="Ses URLs postées déclenchent le fetch du titre HTML">🔗 URL fetch</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_image_gen" id="u{{ u.id }}_img" {% if u.allow_image_gen %}checked{% endif %}>
+        <label for="u{{ u.id }}_img" style="margin:0;" title="{{ command_prefix }}img &lt;prompt&gt; + natural language image requests">🎨 Image gen</label>
+      </div>
+    </div>
+  </form>
+  {% endfor %}
+</div>
+
+{% endblock %}

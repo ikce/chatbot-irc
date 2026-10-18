@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Console{% endblock %}
+{% block head %}
+<style>
+  #log {
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    height: 60vh;
+    overflow-y: auto;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .line { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+  .line .ts { color: var(--muted); margin-right: 8px; }
+  .line .chan { color: var(--accent); margin-right: 8px; }
+  .line .nick { font-weight: 600; margin-right: 6px; }
+  .line.in .nick { color: #ffe066; }
+  .line.out { color: #b9f6ca; }
+  .line.out .nick { color: #51cf66; }
+  .line.system { color: var(--muted); font-style: italic; }
+  .line.error { color: var(--err); }
+
+  #say-form {
+    display: grid;
+    grid-template-columns: 180px 1fr 100px;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .mod-panel {
+    display: flex; flex-wrap: wrap; gap: 8px 16px;
+    margin-bottom: 12px; padding: 10px 12px;
+    background: #101418; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px;
+  }
+  .mod-chan {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: 4px; background: #0b0d12;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .mod-chan.enforcing { border-left: 3px solid #ff9a3c; padding-left: 6px; }
+  .mod-chan.observing { border-left: 3px solid #4c9eff; padding-left: 6px; }
+  .mod-chan.off       { border-left: 3px solid #444; padding-left: 6px; opacity: 0.55; }
+  .mod-chan .name { font-weight: 600; color: var(--accent); }
+  .mod-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.3px; background: #1a2a3a; color: #b5d8ff;
+  }
+  .mod-badge.dry { background: #3a2a1a; color: #ffd8b5; }
+  .mod-empty { color: var(--muted); font-style: italic; }
+  .mod-legend { margin-left: auto; color: var(--muted); font-size: 11px; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Console live</h1>
+
+<div class="mod-panel" title="Résumé des policies de modération actives par canal (voir /moderation)">
+  <strong style="color: var(--muted);">Modération :</strong>
+  {% if moderation_summary %}
+    {% for m in moderation_summary %}
+      {% if not m.features %}
+        {% set cls = 'off' %}
+      {% elif m.any_enforcing and not m.dry_run %}
+        {% set cls = 'enforcing' %}
+      {% else %}
+        {% set cls = 'observing' %}
+      {% endif %}
+      <span class="mod-chan {{ cls }}">
+        <span class="name">{{ m.channel }}</span>
+        {% if m.features %}
+          {% for f in m.features %}
+          <span class="mod-badge">{{ f }}</span>
+          {% endfor %}
+          {% if m.dry_run and m.any_enforcing %}
+          <span class="mod-badge dry">dry-run</span>
+          {% endif %}
+        {% else %}
+          <span class="mod-empty">aucune</span>
+        {% endif %}
+      </span>
+    {% endfor %}
+  {% else %}
+    <span class="mod-empty">Aucune policy configurée — <a href="/moderation">/moderation</a></span>
+  {% endif %}
+  <span class="mod-legend">
+    <span style="color:#ff9a3c;">■</span> enforce
+    <span style="color:#4c9eff; margin-left:6px;">■</span> observe
+    <span style="color:#666; margin-left:6px;">■</span> off
+  </span>
+</div>
+
+<div class="card">
+  <div id="log"></div>
+
+  <form id="say-form" onsubmit="return sayIt(event)">
+    <select id="channel">
+      {% for ch in channels %}
+      <option value="{{ ch }}">{{ ch }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="message" placeholder="Parler comme le bot dans le canal sélectionné…" autocomplete="off">
+    <button type="submit">Envoyer</button>
+  </form>
+</div>
+
+<script>
+  const log = document.getElementById('log');
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  let ws;
+
+  function fmtTs(){ return new Date().toLocaleTimeString(); }
+  function esc(s){ return (s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+  function addLine(cls, chan, nick, msg) {
+    const line = document.createElement('div');
+    line.className = 'line ' + cls;
+    line.innerHTML = `<span class="ts">${fmtTs()}</span>`
+      + (chan ? `<span class="chan">${esc(chan)}</span>` : '')
+      + (nick ? `<span class="nick">&lt;${esc(nick)}&gt;</span>` : '')
+      + `<span>${esc(msg)}</span>`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function loadHistory() {
+    try {
+      const r = await fetch('/api/messages?limit=100');
+      const rows = await r.json();
+      for (const m of rows) {
+        const cls = m.direction === 'out' ? 'out' : m.direction === 'system' ? 'system' : 'in';
+        addLine(cls, m.channel, m.nick, m.message);
+      }
+    } catch(e){ /* ignore */ }
+  }
+
+  function connect() {
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => addLine('system', '', '', 'websocket connecté');
+    ws.onclose = () => {
+      addLine('system', '', '', 'websocket déconnecté — retry 3s');
+      setTimeout(connect, 3000);
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const j = JSON.parse(ev.data);
+        const p = j.payload || {};
+        if (j.type === 'irc_msg')   addLine('in',    p.channel, p.nick, p.message);
+        else if (j.type === 'bot_reply') addLine('out',  p.channel, p.nick, p.message);
+        else if (j.type === 'system')    addLine('system', '', '', p.message);
+        else if (j.type === 'error')     addLine('error', '', '', p.message);
+      } catch(e){ /* ignore */ }
+    };
+  }
+
+  function sayIt(e) {
+    e.preventDefault();
+    const channel = document.getElementById('channel').value;
+    const input = document.getElementById('message');
+    const message = input.value.trim();
+    if (!channel || !message || !ws || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify({ action: 'say', channel, message }));
+    input.value = '';
+    return false;
+  }
+
+  loadHistory().then(connect);
+</script>
+{% endblock %}

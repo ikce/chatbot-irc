@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Modération — Réputation{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 20px; margin-bottom: 12px; }
+  .toggle { display: flex; align-items: center; gap: 8px; }
+  .toggle input { width: auto; }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+  .kv span strong { color: var(--fg); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+  }
+  .badge.ok { background: #1a3a1a; color: #b5ffb5; }
+  .badge.warn { background: #3a2a1a; color: #ffd8b5; }
+  .badge.err { background: #3a1a1a; color: #ffb5b5; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .refresh-form { display: inline; margin-left: 10px; }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Réputation</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation" class="active">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Configuration sauvegardée.</div>
+{% endif %}
+{% if request.query_params.get('refreshed') %}
+<div class="toast">
+  Spamhaus refresh : {{ request.query_params.get('drop') or 0 }} DROP, {{ request.query_params.get('edrop') or 0 }} EDROP
+  {% if request.query_params.get('err') %} — voir les logs pour l'erreur{% endif %}
+</div>
+{% endif %}
+
+<div class="banner-info">
+  <strong>Phase 2 — Réputation.</strong> Les sources externes (Spamhaus DROP/EDROP + AbuseIPDB)
+  et l'historique local (IncidentHistory) alimentent le verdict par user.
+  <em>À ce stade aucune action de ban n'est émise</em> — les incidents sont loggés
+  et notifiés (si configuré), pour valider la précision avant la Phase 4.
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Spamhaus DROP / EDROP</h3>
+  <div class="kv">
+    <span>Statut :
+      {% if cfg.spamhaus_enabled %}<span class="badge ok">activé</span>{% else %}<span class="badge">désactivé</span>{% endif %}
+    </span>
+    <span>Dernier refresh : <strong>{{ cfg.spamhaus_last_update.strftime('%Y-%m-%d %H:%M UTC') if cfg.spamhaus_last_update else '—' }}</strong></span>
+    <span>DROP : <strong>{{ cfg.spamhaus_drop_count }}</strong> CIDR</span>
+    <span>EDROP : <strong>{{ cfg.spamhaus_edrop_count }}</strong> CIDR</span>
+    <span>En mémoire : <strong>{{ spamhaus_stats.total_in_memory }}</strong></span>
+  </div>
+  {% if cfg.spamhaus_last_error %}
+  <p><span class="badge err">Dernière erreur</span> <span class="mono" style="font-size:12px;">{{ cfg.spamhaus_last_error }}</span></p>
+  {% endif %}
+  <form method="post" action="/moderation/reputation/refresh" class="refresh-form" style="margin-top:12px;">
+    <button type="submit">Rafraîchir maintenant</button>
+    <span class="muted" style="font-size:12px; margin-left:8px;">
+      (téléchargement synchrone — 2-5 sec)
+    </span>
+  </form>
+</div>
+
+<form method="post" action="/moderation/reputation/save" class="card">
+  <h3 style="margin-top: 0;">Configuration</h3>
+
+  <div class="toggles">
+    <label class="toggle">
+      <input type="checkbox" name="spamhaus_enabled" {% if cfg.spamhaus_enabled %}checked{% endif %}>
+      Spamhaus DROP/EDROP activé
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="abuseipdb_enabled" {% if cfg.abuseipdb_enabled %}checked{% endif %}>
+      AbuseIPDB activé
+    </label>
+  </div>
+
+  <div class="row2" style="margin-bottom: 12px;">
+    <div>
+      <label>AbuseIPDB API key</label>
+      <input type="text" name="abuseipdb_api_key" value="{{ api_key_masked }}"
+             placeholder="colle ta clé ici, ou laisse tel quel pour garder"
+             autocomplete="off">
+      <p class="help" style="font-size:12px; color:var(--muted); margin-top:4px;">
+        Clé gratuite : <a href="https://www.abuseipdb.com/register" target="_blank">abuseipdb.com/register</a> — 1000 checks/jour.
+        Champ masqué : laisse les <code>*</code> pour conserver la clé actuelle, ou colle une nouvelle clé pour la remplacer.
+      </p>
+    </div>
+    <div>
+      <label>Fenêtre incidents locaux (jours)</label>
+      <input type="number" name="incident_lookback_days" value="{{ cfg.incident_lookback_days }}" min="1" max="365">
+      <p class="help" style="font-size:12px; color:var(--muted); margin-top:4px;">
+        Nombre de jours en arrière pour compter les incidents (résidentiels compromis).
+      </p>
+    </div>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>AbuseIPDB : âge max (jours)</label>
+      <input type="number" name="abuseipdb_max_age_days" value="{{ cfg.abuseipdb_max_age_days }}" min="1" max="365">
+    </div>
+    <div>
+      <label>AbuseIPDB : TTL cache (sec)</label>
+      <input type="number" name="abuseipdb_cache_ttl_sec" value="{{ cfg.abuseipdb_cache_ttl_sec }}" min="60" step="60">
+    </div>
+    <div>
+      <label>Spamhaus : interval refresh (sec)</label>
+      <input type="number" name="spamhaus_refresh_interval_sec" value="{{ cfg.spamhaus_refresh_interval_sec }}" min="600" step="60">
+    </div>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <button type="submit">Sauvegarder</button>
+  </div>
+</form>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Incidents récents ({{ incidents|length }})</h3>
+  {% if incidents %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Type</th>
+        <th>Sévérité</th>
+        <th>Chan</th>
+        <th>Nick</th>
+        <th>IP</th>
+        <th>Host</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in incidents %}
+      <tr>
+        <td><small class="muted">{{ i.ts.strftime('%m-%d %H:%M:%S') }}</small></td>
+        <td><span class="badge {% if i.incident_type == 'ban' %}err{% elif i.severity >= 8 %}err{% elif i.severity >= 4 %}warn{% endif %}">{{ i.incident_type }}</span></td>
+        <td class="mono">{{ i.severity }}</td>
+        <td class="mono">{{ i.channel }}</td>
+        <td class="mono"><strong>{{ i.nick }}</strong></td>
+        <td class="mono">{{ i.ip or '—' }}</td>
+        <td class="mono"><small>{{ i.host or '—' }}</small></td>
+        <td><small>{{ i.detail }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Aucun incident enregistré. Active <code>reputation_check_enabled</code> + <code>join_check_enabled</code> sur au moins un chan pour commencer.</p>
+  {% endif %}
+</div>
+{% endblock %}

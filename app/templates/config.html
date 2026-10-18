@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}IRC / ZNC{% endblock %}
+{% block content %}
+<h1>Connexion IRC / ZNC</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Redémarre le container pour reconnecter avec les nouveaux paramètres.</div>
+{% endif %}
+
+<form method="post" action="/">
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Serveur ZNC (host)</label>
+        <input type="text" name="host" value="{{ cfg.host }}" required>
+      </div>
+      <div>
+        <label>Port</label>
+        <input type="number" name="port" value="{{ cfg.port }}" required>
+      </div>
+    </div>
+    <div class="checkbox">
+      <input type="checkbox" id="tls" name="tls" {% if cfg.tls %}checked{% endif %}>
+      <label for="tls" style="margin: 0;">TLS</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>User ZNC (format <code>user/network</code>)</label>
+        <input type="text" name="user" value="{{ cfg.user }}">
+      </div>
+      <div>
+        <label>Mot de passe ZNC</label>
+        <input type="password" name="password" value="{{ cfg.password }}">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row3">
+      <div>
+        <label>Nick</label>
+        <input type="text" name="nick" value="{{ cfg.nick }}" required>
+      </div>
+      <div>
+        <label>Ident</label>
+        <input type="text" name="ident" value="{{ cfg.ident }}" required>
+      </div>
+      <div>
+        <label>Realname</label>
+        <input type="text" name="realname" value="{{ cfg.realname }}" required>
+      </div>
+    </div>
+    <label>Canaux (séparés par des virgules)</label>
+    <input type="text" name="channels" value="{{ cfg.channels }}" placeholder="#lab, #test">
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">Commandes bot — préfixe global</h3>
+    <p style="color: var(--muted); margin-top: 0;">
+      Caractère(s) qui commence toutes les commandes IRC du bot (<code>!bible</code>, <code>!flag</code>, etc.).
+      Change ce préfixe si un autre bot squatte déjà le tien.
+      <strong>Impact immédiat</strong> sur toutes les commandes existantes — aucun redémarrage requis.
+      Valeurs typiques : <code>!</code>, <code>.</code>, <code>~</code>, <code>+</code>, <code>&amp;</code>.
+    </p>
+    <div class="row">
+      <div>
+        <label>Préfixe (1-3 chars non-alphanumériques)</label>
+        <input type="text" name="command_prefix" value="{{ cfg.command_prefix or '!' }}"
+               maxlength="3" pattern="[^A-Za-z0-9]{1,3}" style="width: 80px; font-size: 20px; text-align: center;">
+      </div>
+    </div>
+  </div>
+
+  <button type="submit">💾 Sauvegarder</button>
+  <small class="muted" style="margin-left: 12px;">Les changements prennent effet à la prochaine reconnexion IRC.</small>
+</form>
+{% endblock %}

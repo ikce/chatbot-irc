@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Modération — Bans (P4){% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 20px; margin-bottom: 12px; }
+  .toggle { display: flex; align-items: center; gap: 8px; }
+  .toggle input { width: auto; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+  }
+  .badge.live { background: #3a1a1a; color: #ffb5b5; }
+  .badge.dry { background: #3a2a1a; color: #ffd8b5; }
+  .badge.inactive { background: var(--border); color: var(--muted); }
+  .badge.spamhaus_drop, .badge.spamhaus_edrop { background: #3a1a1a; color: #ffb5b5; }
+  .badge.abuseipdb { background: #3a2a1a; color: #ffd8b5; }
+  .badge.llm { background: #2a1a3a; color: #d8b5ff; }
+  .badge.pattern { background: #1a2a3a; color: #b5d8ff; }
+  .badge.local_incidents { background: #1a3a1a; color: #b5ffb5; }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+  .banner-warn {
+    background: #3a2a1a; border: 1px solid #543; color: #ffd8b5;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+  .placeholders { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .placeholders code {
+    background: var(--border); padding: 1px 5px; border-radius: 3px;
+    font-family: ui-monospace, monospace; font-size: 11px;
+  }
+  .filters { display: flex; gap: 12px; align-items: end; margin-bottom: 12px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Bans (Phase 4)</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans" class="active">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Configuration sauvegardée.</div>
+{% endif %}
+{% if request.query_params.get('tpl_added') %}
+<div class="toast">Template ajouté.</div>
+{% endif %}
+{% if request.query_params.get('unbanned') %}
+<div class="toast">Unban envoyé au serveur.</div>
+{% endif %}
+{% if request.query_params.get('err') %}
+<div class="toast" style="background:#3a1a1a;color:#ffb5b5;">Erreur : {{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<div class="banner-info">
+  <strong>Phase 4 — Ban engine.</strong> Émet un <code>MODE +b</code> direct si le bot est op sur
+  le chan, sinon un <code>/msg X BAN</code> (service Undernet). Le ban_engine respecte
+  <code>auto_ban_enabled</code> ET <code>dry_run</code> de chaque policy chan :
+  laisser <code>dry_run=ON</code> pendant les premières heures pour valider avant d'ouvrir les vannes.
+</div>
+
+{% if not cfg %}
+<div class="banner-warn">Config engine non initialisée — impossible.</div>
+{% else %}
+
+<form method="post" action="/moderation/bans/config/save" class="card">
+  <h3 style="margin-top: 0;">Configuration du ban engine</h3>
+
+  <div class="row2" style="margin-bottom: 12px;">
+    <div>
+      <label>Nick du service ban (Undernet X, ou ChanServ)</label>
+      <input type="text" name="chanserv_nick" value="{{ cfg.chanserv_nick }}" placeholder="X">
+      <p class="placeholders">Undernet = <code>X</code>. Freenode/OFTC/Libera = <code>ChanServ</code>.</p>
+    </div>
+    <div>
+      <label>Template commande ChanServ ban</label>
+      <input type="text" name="chanserv_ban_cmd_template" value="{{ cfg.chanserv_ban_cmd_template }}">
+      <p class="placeholders">Placeholders : <code>{channel}</code> <code>{mask}</code> <code>{duration}</code> <code>{reason}</code></p>
+    </div>
+  </div>
+
+  <div class="toggles">
+    <label class="toggle">
+      <input type="checkbox" name="prefer_chanserv" {% if cfg.prefer_chanserv %}checked{% endif %}>
+      Toujours passer par le service (jamais MODE direct même si op)
+    </label>
+    <label class="toggle">
+      <input type="checkbox" name="kick_before_ban" {% if cfg.kick_before_ban %}checked{% endif %}>
+      /KICK avant /MODE +b (éjecte immédiatement, requiert op)
+    </label>
+  </div>
+
+  <div class="row3">
+    <div>
+      <label>Rate limit : max bans / heure (safeguard runaway)</label>
+      <input type="number" name="max_bans_per_hour" value="{{ cfg.max_bans_per_hour }}" min="1" max="500">
+    </div>
+    <div>
+      <label>Fenêtre dedup (sec) — skip re-ban même mask</label>
+      <input type="number" name="duplicate_dedupe_window_sec" value="{{ cfg.duplicate_dedupe_window_sec }}" min="10" step="10">
+    </div>
+    <div>
+      <label>Template raison par défaut</label>
+      <select name="default_template_id">
+        <option value="">— aucun —</option>
+        {% for t in templates_list %}
+        <option value="{{ t.id }}" {% if cfg.default_template_id == t.id %}selected{% endif %}>
+          {{ t.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div>
+    <label>Message KICK (si activé)</label>
+    <input type="text" name="kick_message_template" value="{{ cfg.kick_message_template }}">
+    <p class="placeholders">Placeholder : <code>{reason}</code></p>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <button type="submit">Sauvegarder config engine</button>
+  </div>
+</form>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Templates de raisons ({{ templates_list|selectattr('active')|list|length }} actifs / {{ templates_list|length }})</h3>
+  <p class="placeholders">
+    Placeholders interpolés : <code>{nick}</code> <code>{ip}</code> <code>{host}</code>
+    <code>{source}</code> <code>{score}</code> <code>{chan}</code> <code>{verdict}</code>
+    <code>{pattern_kinds}</code> <code>{cidr}</code> <code>{ref}</code> <code>{bot}</code>
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Actif</th>
+        <th>Nom</th>
+        <th>Template</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in templates_list %}
+      <tr style="{% if not t.active %}opacity: 0.5;{% endif %}">
+        <td>
+          <form method="post" action="/moderation/bans/templates/{{ t.id }}/toggle" style="display:inline;">
+            <button type="submit" title="Toggle">{% if t.active %}✓{% else %}✗{% endif %}</button>
+          </form>
+        </td>
+        <td class="mono">{{ t.name }}</td>
+        <td class="mono" style="font-size:12px;">{{ t.template }}</td>
+        <td>
+          <form method="post" action="/moderation/bans/templates/{{ t.id }}/delete" style="display:inline;">
+            <button type="submit" class="btn danger" onclick="return confirm('Supprimer {{ t.name }} ?')">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h4 style="margin-top: 16px;">Ajouter un template</h4>
+  <form method="post" action="/moderation/bans/templates/add">
+    <div class="row2">
+      <div>
+        <label>Nom (unique)</label>
+        <input type="text" name="name" placeholder="strict_spamhaus" required>
+      </div>
+      <div>
+        <label>Template</label>
+        <input type="text" name="template" placeholder="{source} listed {ip} — auto ban" required>
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <button type="submit">Ajouter template</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Historique des bans ({{ bans|length }})</h3>
+
+  <form method="get" action="/moderation/bans" class="filters">
+    <div>
+      <label>Chan</label>
+      <select name="channel">
+        <option value="">— tous —</option>
+        {% for p in policies %}
+        <option value="{{ p.channel }}" {% if filter_channel == p.channel %}selected{% endif %}>{{ p.channel }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>
+        <input type="checkbox" name="active_only" {% if filter_active_only %}checked{% endif %}
+               onchange="this.form.submit()"> Actifs seulement
+      </label>
+    </div>
+    <button type="submit">Filtrer</button>
+  </form>
+
+  {% if bans %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>État</th>
+        <th>Chan</th>
+        <th>Nick</th>
+        <th>Mask</th>
+        <th>Source</th>
+        <th>IP / Host</th>
+        <th>Raison</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in bans %}
+      <tr style="{% if not b.active %}opacity: 0.7;{% endif %}">
+        <td><small class="muted">{{ b.banned_at.strftime('%m-%d %H:%M:%S') }}</small></td>
+        <td>
+          {% if b.active %}
+            <span class="badge live">LIVE</span>
+          {% elif 'dry-run' in b.banned_by_nick %}
+            <span class="badge dry">DRY-RUN</span>
+          {% else %}
+            <span class="badge inactive">unbanned</span>
+          {% endif %}
+        </td>
+        <td class="mono">{{ b.channel }}</td>
+        <td class="mono"><strong>{{ b.original_nick or '—' }}</strong></td>
+        <td class="mono">{{ b.mask }}</td>
+        <td><span class="badge {{ b.source }}">{{ b.source }}</span></td>
+        <td class="mono">
+          <small>{{ b.ip or '—' }}<br>{{ b.host or '—' }}</small>
+        </td>
+        <td><small>{{ b.reason }}</small></td>
+        <td>
+          {% if b.active %}
+          <form method="post" action="/moderation/bans/{{ b.id }}/unban" style="display:inline;">
+            <button type="submit" onclick="return confirm('Unban {{ b.mask }} sur {{ b.channel }} ?')">Unban</button>
+          </form>
+          {% else %}
+          —
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Aucun ban à afficher.</p>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endblock %}

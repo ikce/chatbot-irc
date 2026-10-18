@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}Intel IP{% endblock %}
+{% block content %}
+<h1>🕵️ Intel IP &amp; Commandes custom</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">Sauvegardé. Prise en compte immédiate.</div>
+{% endif %}
+{% if request.query_params.get('err') == 'recipe_unknown' %}
+<div class="toast" style="background:#3d1616;color:#f6b9b9;border-color:#5a1e1e;">
+  Recette inconnue — choisis dans la liste.
+</div>
+{% endif %}
+
+<p style="color: var(--muted); margin-top: 0;">
+  Deux surfaces distinctes ici :<br>
+  <strong>1.</strong> <em>Annotations IP</em> — labels manuels (good / bad / suspect / note)
+  que le LLM lit quand quelqu'un l'interroge sur une IP ou un host. C'est ta source de
+  vérité op.<br>
+  <strong>2.</strong> <em>Commandes custom</em> — mapping <code>!nom &lt;args&gt;</code>
+  → recette Python read-only (curée, pas de SQL arbitraire) → sortie IRC (avec humanization LLM
+  optionnelle). L'ACL réutilise la liste Bible (une seule liste de masks à maintenir).
+</p>
+
+<!-- ============================================================ -->
+<!-- ANNOTATIONS IP                                                -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">Annotations IP / host</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    <code>target</code> = une IP littérale (<code>192.168.1.5</code>), un host FQDN
+    (<code>host.example.com</code>), ou un pattern wildcard <code>*.videotron.ca</code>
+    matché <em>fnmatch</em>. Le LLM consulte ces annotations via l'intent
+    <code>describe_ip</code> et les commandes <code>!flag</code> / <code>!ip</code>.
+  </p>
+
+  <form method="post" action="/intel/annotations" style="margin-top: 12px;">
+    <div style="display: grid; grid-template-columns: 2fr 1fr 3fr 1fr auto; gap: 10px; align-items: end;">
+      <div>
+        <label>Target</label>
+        <input type="text" name="target" placeholder="192.168.1.5 ou *.tor-exit.net" required>
+      </div>
+      <div>
+        <label>Label</label>
+        <select name="label">
+          <option value="bad">bad</option>
+          <option value="suspect">suspect</option>
+          <option value="good">good</option>
+          <option value="note" selected>note</option>
+        </select>
+      </div>
+      <div>
+        <label>Note</label>
+        <input type="text" name="note" placeholder="ex: proxy TOR exit confirmé 2026-08-15">
+      </div>
+      <div>
+        <label>Ajouté par</label>
+        <input type="text" name="added_by" value="webui">
+      </div>
+      <button type="submit">➕ Ajouter</button>
+    </div>
+  </form>
+
+  <table style="margin-top: 20px;">
+    <thead>
+      <tr><th>ID</th><th>Target</th><th>Label</th><th>Note</th><th>Par</th><th>Le</th><th>Actif</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for a in annotations %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td><code>{{ a.target }}</code></td>
+        <td>
+          {% if a.label == 'bad' %}<span style="color: var(--err);">● bad</span>
+          {% elif a.label == 'good' %}<span style="color: var(--ok);">● good</span>
+          {% elif a.label == 'suspect' %}<span style="color: var(--warn);">● suspect</span>
+          {% else %}<span style="color: var(--muted);">● note</span>{% endif %}
+        </td>
+        <td>{{ a.note }}</td>
+        <td>{{ a.added_by }}</td>
+        <td><small class="muted">{{ a.added_at.strftime('%Y-%m-%d %H:%M') if a.added_at else '—' }}</small></td>
+        <td>{% if a.active %}✅{% else %}⏸️{% endif %}</td>
+        <td>
+          <form method="post" action="/intel/annotations/{{ a.id }}/delete" style="display:inline;">
+            <button type="submit" class="btn danger" onclick="return confirm('Supprimer cette annotation ?')">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" style="color: var(--muted); text-align: center;">Aucune annotation — le LLM juge à partir des sources externes uniquement.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- COMMANDES CUSTOM                                              -->
+<!-- ============================================================ -->
+
+<div class="card">
+  <h3 style="margin-top: 0;">Commandes custom</h3>
+  <p style="color: var(--muted); margin-top: 0;">
+    Une commande = un <strong>pattern</strong> qui match un message IRC, mappé sur une
+    <strong>recette</strong> Python read-only. Les <em>arguments</em> extraits deviennent
+    des kwargs pour la recette. Résultat formaté via <code>output_template</code>
+    (str.format Python, ex: <code>{target}: {count} incidents</code>).
+  </p>
+  <p style="color: var(--muted); margin-top: 0;">
+    <strong>2 modes de pattern</strong> :<br>
+    &nbsp;&nbsp;<strong>Simple</strong> (facile) — écris juste <code>flag {ip}</code>, le
+    bot devient <code>{{ command_prefix }}flag &lt;ip&gt;</code>. Placeholders :
+    <code>{nom}</code> = un mot, <code>{nom...}</code> = reste de la ligne. Le préfixe est
+    ajouté auto (courant : <code>{{ command_prefix }}</code>).<br>
+    &nbsp;&nbsp;<strong>Regex</strong> (avancé) — vraie regex Python avec groupes nommés
+    <code>(?P&lt;arg&gt;...)</code>. Le préfixe est prepend, tu écris <code>flag\s+(?P&lt;ip&gt;\S+)</code>
+    (sans le <code>^!</code>).
+  </p>
+  <p style="color: var(--muted); margin-top: 0;">
+    <strong>Recettes disponibles</strong> :
+    {% for r in recipes %}<code>{{ r }}</code>{{ ", " if not loop.last }}{% endfor %}.
+    Pour en ajouter une, éditer <code>app/custom_commands.py</code> (registre <code>RECIPES</code>).
+  </p>
+
+  <details style="margin-top: 12px;">
+    <summary style="cursor: pointer; color: var(--accent);">➕ Ajouter une commande</summary>
+    <form method="post" action="/intel/commands" style="margin-top: 12px;">
+      <div class="row">
+        <div>
+          <label>Nom (unique, ex: flag)</label>
+          <input type="text" name="name" required>
+        </div>
+        <div>
+          <label>Recette</label>
+          <select name="recipe" required>
+            <option value="">— choisir —</option>
+            {% for r in recipes %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <div>
+          <label>Mode du pattern</label>
+          <select name="pattern_mode" id="new_pattern_mode" onchange="updateTriggerHelp('new')">
+            <option value="simple" selected>Simple (recommandé)</option>
+            <option value="regex">Regex (avancé)</option>
+          </select>
+        </div>
+        <div>
+          <label>Pattern <span id="new_pattern_help" style="color:var(--muted);font-size:11px;">— ex: <code>flag {ip}</code></span></label>
+          <input type="text" name="trigger" id="new_trigger" placeholder="flag {ip}" required>
+        </div>
+      </div>
+      <label>Description (aide humaine)</label>
+      <input type="text" name="description">
+      <label>Output template (str.format, vide = dump auto)</label>
+      <input type="text" name="output_template" placeholder="{ip}: {count} résultats">
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap: 10px; margin-top: 12px; align-items: end;">
+        <div class="checkbox">
+          <input type="checkbox" name="active" id="new_active" checked>
+          <label for="new_active" style="margin:0;">Actif</label>
+        </div>
+        <div class="checkbox">
+          <input type="checkbox" name="acl_required" id="new_acl" checked>
+          <label for="new_acl" style="margin:0;">ACL requise</label>
+        </div>
+        <div class="checkbox">
+          <input type="checkbox" name="allow_pm" id="new_pm" checked>
+          <label for="new_pm" style="margin:0;">Autoriser en PV</label>
+        </div>
+        <div class="checkbox">
+          <input type="checkbox" name="humanize_with_llm" id="new_hum">
+          <label for="new_hum" style="margin:0;">Humanize LLM</label>
+        </div>
+        <div>
+          <label>Ajouté par</label>
+          <input type="text" name="added_by" value="webui">
+        </div>
+        <button type="submit">💾 Créer</button>
+      </div>
+    </form>
+  </details>
+
+  <script>
+    function updateTriggerHelp(id_prefix) {
+      const mode = document.getElementById(id_prefix + '_pattern_mode').value;
+      const input = document.getElementById(id_prefix + '_trigger');
+      const help = document.getElementById(id_prefix + '_pattern_help');
+      if (mode === 'simple') {
+        input.placeholder = 'flag {ip}';
+        help.innerHTML = '— ex: <code>flag {ip}</code> ou <code>say {rest...}</code> (préfixe ajouté auto)';
+      } else {
+        input.placeholder = 'flag\\s+(?P<ip>\\S+)';
+        help.innerHTML = '— ex: <code>flag\\s+(?P&lt;ip&gt;\\S+)</code> (SANS le <code>^!</code>, préfixe prepend auto)';
+      }
+    }
+  </script>
+
+  {% for c in commands %}
+  <form method="post" action="/intel/commands/{{ c.id }}" style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 12px;">
+      <strong style="font-size: 16px;">{{ command_prefix }}{{ c.name }}</strong>
+      <small class="muted">recette: <code>{{ c.recipe }}</code></small>
+      <small class="muted">mode: <code>{{ c.pattern_mode }}</code></small>
+      <small class="muted">créée par {{ c.added_by }}</small>
+      <div style="margin-left: auto;">
+        <button type="submit" class="btn">💾 Sauver</button>
+        <button type="submit" formaction="/intel/commands/{{ c.id }}/delete" formmethod="post"
+                class="btn danger" onclick="return confirm('Supprimer la commande {{ command_prefix }}{{ c.name }} ?')">🗑</button>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Mode</label>
+        <select name="pattern_mode" id="edit_pattern_mode_{{ c.id }}" onchange="updateTriggerHelp('edit_{{ c.id }}')">
+          <option value="simple" {% if c.pattern_mode == 'simple' %}selected{% endif %}>Simple</option>
+          <option value="regex" {% if c.pattern_mode != 'simple' %}selected{% endif %}>Regex</option>
+        </select>
+      </div>
+      <div>
+        <label>Pattern <span id="edit_{{ c.id }}_pattern_help" style="color:var(--muted);font-size:11px;">
+          {% if c.pattern_mode == 'simple' %}— ex: <code>flag {ip}</code>{% else %}— sans <code>^{{ command_prefix }}</code>{% endif %}
+        </span></label>
+        <input type="text" name="trigger" id="edit_{{ c.id }}_trigger" value="{{ c.trigger }}">
+      </div>
+      <div>
+        <label>Recette</label>
+        <select name="recipe">
+          {% for r in recipes %}
+          <option value="{{ r }}" {% if c.recipe == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <label>Description</label>
+    <input type="text" name="description" value="{{ c.description }}">
+    <label>Output template</label>
+    <input type="text" name="output_template" value="{{ c.output_template }}">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; margin-top: 12px;">
+      <div class="checkbox">
+        <input type="checkbox" name="active" id="active_{{ c.id }}" {% if c.active %}checked{% endif %}>
+        <label for="active_{{ c.id }}" style="margin:0;">Actif</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="acl_required" id="acl_{{ c.id }}" {% if c.acl_required %}checked{% endif %}>
+        <label for="acl_{{ c.id }}" style="margin:0;">ACL requise (UserAcl)</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="allow_pm" id="pm_{{ c.id }}" {% if c.allow_pm %}checked{% endif %}>
+        <label for="pm_{{ c.id }}" style="margin:0;">Autoriser en PV</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" name="humanize_with_llm" id="hum_{{ c.id }}" {% if c.humanize_with_llm %}checked{% endif %}>
+        <label for="hum_{{ c.id }}" style="margin:0;">Humanize via LLM</label>
+      </div>
+    </div>
+  </form>
+  {% else %}
+  <p style="color: var(--muted); margin-top: 20px;">Aucune commande — les seeds n'ont pas tourné ?</p>
+  {% endfor %}
+</div>
+
+<script>
+  // Initialise le helper pour toutes les commandes existantes
+  document.querySelectorAll('[id^="edit_pattern_mode_"]').forEach(el => {
+    const id = el.id.replace('edit_pattern_mode_', '');
+    updateTriggerHelp('edit_' + id);
+  });
+</script>
+
+{% endblock %}

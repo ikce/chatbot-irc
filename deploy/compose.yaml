@@ -1,0 +1,28 @@
+services:
+  chatbot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: chatbot-irc:latest
+    container_name: chatbot-irc
+    restart: unless-stopped
+    ports:
+      # WebUI/API exposée sur toutes les interfaces — lab perso derrière
+      # firewall, accès LAN nécessaire pour piloter le bot depuis d'autres
+      # postes. Auth applicative : page /login (cf. app/auth.py et
+      # ARCHITECTURE.md § Sécurité).
+      - "0.0.0.0:54878:8080"
+    env_file:
+      - .env
+    volumes:
+      - chatbot_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  chatbot_data:
+    driver: local

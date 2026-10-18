@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Modération — Patterns{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .grid-add { display: grid; grid-template-columns: 2fr 1fr 3fr 1fr 3fr auto; gap: 10px; align-items: end; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+  }
+  .badge.k-phone { background: #1a3a3a; color: #b5fff0; }
+  .badge.k-address { background: #3a1a3a; color: #ffb5f0; }
+  .badge.k-minor_content { background: #3a1a1a; color: #ffb5b5; }
+  .badge.k-credit_card { background: #3a2a1a; color: #ffd8b5; }
+  .badge.k-social_id { background: #3a2a1a; color: #ffd8b5; }
+  .badge.k-other { background: var(--border); }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+  .kv span strong { color: var(--fg); }
+  .test-result { background: #0b0d12; padding: 10px; border-radius: 6px; margin-top: 10px; }
+  .test-result .match { color: #b5ffb5; font-family: ui-monospace, monospace; font-size: 13px; }
+  .error-list li { color: var(--err); font-size: 12px; font-family: ui-monospace, monospace; }
+  .suggest-row.covered { opacity: 0.55; background: rgba(255,255,255,0.02); }
+  .suggest-row.covered .cov-tag { color: #ffd8b5; font-size: 11px; font-family: ui-monospace, monospace; }
+  .suggest-row input[type="text"], .suggest-row input[type="number"], .suggest-row select {
+    font-size: 12px; padding: 3px 6px; font-family: ui-monospace, monospace;
+  }
+  .kpi-suggest { display: flex; gap: 20px; font-size: 13px; margin-bottom: 10px; }
+  .kpi-suggest span strong { color: var(--fg); font-size: 15px; font-family: ui-monospace, monospace; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Patterns</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns" class="active">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts">Alertes</a>
+</div>
+
+{% if request.query_params.get('added') %}
+<div class="toast">Pattern ajouté.</div>
+{% endif %}
+{% if request.query_params.get('updated') %}
+<div class="toast">Pattern #{{ request.query_params.get('updated') }} mis à jour.</div>
+{% endif %}
+{% if request.query_params.get('bulk_added') %}
+<div class="toast">
+  {{ request.query_params.get('bulk_added') }} pattern(s) ajouté(s) en batch.
+  {% if request.query_params.get('bulk_err') %}
+  <strong>({{ request.query_params.get('bulk_err') }} erreur(s) — regarde les logs)</strong>
+  {% endif %}
+</div>
+{% endif %}
+{% if request.query_params.get('err') %}
+<div class="toast" style="background:#3a1a1a;color:#ffb5b5;">Erreur : {{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<div class="banner-info">
+  <strong>Phase 3 — Détection de patterns.</strong> Les regex actifs scannent chaque message
+  d'un canal avec <code>pattern_detection_enabled</code>. Un match seul (severity ≥ 7) déclenche
+  un flag ; les autres passent en confirmation LLM avant de compter comme incident.
+  Aucun ban n'est émis à ce stade (dry-run).
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">État</h3>
+  <div class="kv">
+    <span>Patterns actifs compilés : <strong>{{ stats.total_active }}</strong></span>
+    {% for kind, n in stats.by_kind.items() %}
+    <span>{{ kind }} : <strong>{{ n }}</strong></span>
+    {% endfor %}
+  </div>
+  {% if stats.errors %}
+  <p style="margin-top:10px;"><strong style="color:var(--err);">Erreurs de compilation :</strong></p>
+  <ul class="error-list">
+    {% for e in stats.errors %}
+    <li>{{ e.name }} : {{ e.error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Tester un message</h3>
+  <form method="get" action="/moderation/patterns">
+    <textarea name="test_sample" rows="2" placeholder="Colle un message ici pour voir ce qui matche…"
+              style="width:100%;">{{ test_sample }}</textarea>
+    <div style="margin-top: 8px;">
+      <button type="submit">Tester</button>
+    </div>
+  </form>
+  {% if test_result is not none %}
+    {% if test_result %}
+    <div class="test-result">
+      <strong>{{ test_result|length }} match(es)</strong>
+      <table style="margin-top: 8px;">
+        <thead><tr><th>Rule</th><th>Kind</th><th>Sev</th><th>Snippet</th><th>Span</th></tr></thead>
+        <tbody>
+          {% for r in test_result %}
+          <tr>
+            <td class="mono">{{ r.name }}</td>
+            <td><span class="badge k-{{ r.kind }}">{{ r.kind }}</span></td>
+            <td>{{ r.severity }}</td>
+            <td class="mono match">{{ r.snippet }}</td>
+            <td class="mono"><small>{{ r.span[0] }}-{{ r.span[1] }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="test-result muted">Aucun match sur ce sample.</div>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Générer patterns depuis un flood</h3>
+  <p class="muted" style="font-size: 12px; margin-top: 0;">
+    Colle le message de flood/diffamation complet. L'analyseur extrait les URLs,
+    emails, numéros, adresses, handles et n-grams répétés, puis marque ceux déjà couverts
+    par un pattern actif. Coche les nouveaux à ajouter en batch (tu peux éditer nom/regex/sévérité).
+  </p>
+  <form method="post" action="/moderation/patterns/suggest">
+    <textarea name="flood_sample" rows="6" placeholder="Colle ici le flood complet…"
+              style="width:100%;">{{ flood_sample }}</textarea>
+    <div style="margin-top: 8px;">
+      <button type="submit">Analyser & suggérer patterns</button>
+    </div>
+  </form>
+
+  {% if suggestions is not none %}
+    {% if suggestions %}
+    <div class="kpi-suggest" style="margin-top: 14px;">
+      <span>Total : <strong>{{ suggest_summary.total }}</strong></span>
+      <span>Nouveaux : <strong style="color:#b5ffb5;">{{ suggest_summary.new }}</strong></span>
+      <span>Déjà couverts : <strong style="color:#ffd8b5;">{{ suggest_summary.covered }}</strong></span>
+      {% for k, n in suggest_summary.by_kind.items() %}
+      <span>{{ k }} : <strong>{{ n }}</strong></span>
+      {% endfor %}
+    </div>
+
+    <form method="post" action="/moderation/patterns/bulk_add">
+      <table style="margin-top: 8px;">
+        <thead>
+          <tr>
+            <th>
+              <input type="checkbox" onchange="document.querySelectorAll('.sug-check').forEach(c=>c.checked=this.checked)"
+                     title="Tout cocher / décocher">
+            </th>
+            <th>Nom</th>
+            <th>Kind</th>
+            <th>Sev</th>
+            <th>Regex</th>
+            <th>Source</th>
+            <th>Raison</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in suggestions %}
+          <tr class="suggest-row {% if s.covered_by %}covered{% endif %}">
+            <td>
+              <input type="checkbox" class="sug-check" name="sel_{{ loop.index0 }}"
+                     {% if not s.covered_by %}checked{% endif %}>
+            </td>
+            <td><input type="text" name="name_{{ loop.index0 }}" value="{{ s.proposed_name }}" style="width:180px;"></td>
+            <td>
+              <select name="kind_{{ loop.index0 }}">
+                {% for k in ['phone','address','minor_content','credit_card','social_id','other'] %}
+                <option value="{{ k }}" {% if s.proposed_kind == k %}selected{% endif %}>{{ k }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input type="number" name="severity_{{ loop.index0 }}" value="{{ s.proposed_severity }}" min="1" max="10" style="width:52px;"></td>
+            <td><input type="text" name="regex_{{ loop.index0 }}" value="{{ s.proposed_regex }}" style="width:340px;"></td>
+            <td class="mono" style="font-size:11px; max-width:200px; word-break:break-all;">{{ s.source_snippet }}</td>
+            <td><small>{{ s.reason }}</small><input type="hidden" name="reason_{{ loop.index0 }}" value="{{ s.reason }}"></td>
+            <td>
+              {% if s.covered_by %}
+                <span class="cov-tag" title="Déjà matché par un pattern actif — coche quand-même si tu veux dupliquer">
+                  couvert par<br>{{ s.covered_by }}
+                </span>
+              {% else %}
+                <span class="badge" style="background:#1a3a1a;color:#b5ffb5;">NEW</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div style="margin-top: 12px;">
+        <button type="submit">Ajouter les cochés</button>
+        <span class="muted" style="font-size:12px; margin-left:10px;">
+          Par défaut seuls les NEW sont cochés — décoche/coche à ta guise, édite le regex si besoin.
+        </span>
+      </div>
+    </form>
+    {% else %}
+    <p class="muted" style="margin-top: 12px;">Aucun élément notable détecté dans ce flood.</p>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Ajouter un pattern</h3>
+  <form method="post" action="/moderation/patterns/add">
+    <div class="grid-add">
+      <div>
+        <label>Nom (unique)</label>
+        <input type="text" name="name" placeholder="phone_uk" required>
+      </div>
+      <div>
+        <label>Kind</label>
+        <select name="kind">
+          <option value="phone">phone</option>
+          <option value="address">address</option>
+          <option value="minor_content">minor_content</option>
+          <option value="credit_card">credit_card</option>
+          <option value="social_id">social_id</option>
+          <option value="other">other</option>
+        </select>
+      </div>
+      <div>
+        <label>Regex Python</label>
+        <input type="text" name="regex" placeholder="\b\d{2,4}[\s.\-]?\d{4,8}\b" required>
+      </div>
+      <div>
+        <label>Severity (1-10)</label>
+        <input type="number" name="severity" value="5" min="1" max="10">
+      </div>
+      <div>
+        <label>Description</label>
+        <input type="text" name="description">
+      </div>
+      <button type="submit">Ajouter</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Règles ({{ rules|selectattr('active')|list|length }} actives / {{ rules|length }})</h3>
+  <p class="muted" style="font-size: 12px; margin-top: 0;">
+    Chaque champ est éditable : modifie et clique 💾 pour sauver. Le regex est recompilé
+    immédiatement — s'il est invalide, il apparaîtra dans les erreurs de compilation ci-dessus.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Actif</th>
+        <th>Nom</th>
+        <th>Kind</th>
+        <th>Sev</th>
+        <th>Regex</th>
+        <th>Description</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rules %}
+      <tr style="{% if not r.active %}opacity: 0.5;{% endif %}">
+        <td>
+          <form method="post" action="/moderation/patterns/{{ r.id }}/toggle" style="display:inline;">
+            <button type="submit" title="Toggle actif/inactif">{% if r.active %}✓{% else %}✗{% endif %}</button>
+          </form>
+          <form id="edit-{{ r.id }}" method="post" action="/moderation/patterns/{{ r.id }}/update" style="display:none;"></form>
+        </td>
+        <td>
+          <input form="edit-{{ r.id }}" type="text" name="name" value="{{ r.name }}"
+                 class="mono" style="width: 160px; font-size: 12px; padding: 3px 6px;" required>
+        </td>
+        <td>
+          <select form="edit-{{ r.id }}" name="kind" style="font-size: 12px; padding: 3px 6px;">
+            {% for k in ['phone','address','minor_content','credit_card','social_id','other'] %}
+            <option value="{{ k }}" {% if r.kind == k %}selected{% endif %}>{{ k }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <input form="edit-{{ r.id }}" type="number" name="severity" value="{{ r.severity }}"
+                 min="1" max="10" style="width: 55px; font-size: 12px; padding: 3px 6px;">
+        </td>
+        <td>
+          <input form="edit-{{ r.id }}" type="text" name="regex" value="{{ r.regex }}"
+                 class="mono" style="width: 100%; min-width: 300px; font-size: 12px; padding: 3px 6px;" required>
+        </td>
+        <td>
+          <input form="edit-{{ r.id }}" type="text" name="description" value="{{ r.description }}"
+                 style="width: 100%; min-width: 200px; font-size: 12px; padding: 3px 6px;">
+        </td>
+        <td style="white-space: nowrap;">
+          <button form="edit-{{ r.id }}" type="submit" title="Sauvegarder les modifications">💾</button>
+          <form method="post" action="/moderation/patterns/{{ r.id }}/delete" style="display:inline;">
+            <button type="submit" class="btn danger" title="Supprimer"
+                    onclick="return confirm('Supprimer {{ r.name }} ?')">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

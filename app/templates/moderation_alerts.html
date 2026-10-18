@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Modération — Alertes{% endblock %}
+
+{% block head %}
+<style>
+  .subnav { margin-bottom: 20px; }
+  .subnav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px; margin-right: 6px;
+    border: 1px solid var(--border);
+  }
+  .subnav a.active { background: var(--border); color: var(--fg); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; align-items: end; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .kpi {
+    background: #0b0d12; border: 1px solid var(--border); padding: 8px 12px;
+    border-radius: 6px; text-align: center;
+  }
+  .kpi .n { font-size: 22px; font-weight: 600; color: var(--fg); font-family: ui-monospace, monospace; }
+  .kpi .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; background: var(--border); color: var(--muted);
+    font-family: ui-monospace, monospace;
+  }
+  .badge.pattern_hit { background: #1a2a3a; color: #b5d8ff; }
+  .badge.flag_pattern { background: #1a2a3a; color: #b5d8ff; font-weight: 600; }
+  .badge.llm_hint { background: #2a1a3a; color: #d8b5ff; }
+  .badge.flag_llm { background: #2a1a3a; color: #d8b5ff; font-weight: 600; }
+  .badge.flag_reputation { background: #3a2a1a; color: #ffd8b5; }
+  .badge.dry_run_ban { background: #3a2a1a; color: #ffd8b5; font-weight: 600; }
+  .badge.ban { background: #3a1a1a; color: #ffb5b5; font-weight: 600; }
+  .badge.manual { background: var(--border); }
+  .badge.signal { background: var(--border); }
+  .sev { display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-family: ui-monospace, monospace; }
+  .sev.low { background: #1a3a1a; color: #b5ffb5; }
+  .sev.med { background: #3a2a1a; color: #ffd8b5; }
+  .sev.high { background: #3a1a1a; color: #ffb5b5; }
+  .pager { display: flex; gap: 12px; margin-top: 16px; align-items: center; }
+  .banner-info {
+    background: #1a2a3a; border: 1px solid #234; color: #b5d8ff;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px;
+  }
+  .detail-cell {
+    max-width: 500px; word-wrap: break-word; font-size: 12px;
+    font-family: ui-monospace, monospace; color: var(--muted);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Modération — Alertes</h1>
+
+<div class="subnav">
+  <a href="/moderation">Policies</a>
+  <a href="/moderation/whitelist">Whitelist</a>
+  <a href="/moderation/tracelog">Tracelog</a>
+  <a href="/moderation/reputation">Réputation</a>
+  <a href="/moderation/patterns">Patterns</a>
+  <a href="/moderation/llm">LLM</a>
+  <a href="/moderation/bans">Bans</a>
+  <a href="/moderation/alerts" class="active">Alertes</a>
+</div>
+
+<div class="banner-info">
+  <strong>Timeline exhaustive.</strong> Toutes les alertes détectées — signaux faibles compris —
+  atterrissent ici, même si <code>auto_ban_enabled=OFF</code> ou si aucun ban n'a été émis.
+  Utilise les filtres pour zoomer par chan, type ou sévérité.
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="toast">{{ request.query_params.get('saved') }}</div>
+{% endif %}
+
+<div class="card" style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+  <div>
+    <strong>Faux positifs ZNC</strong>
+    <span class="muted" style="font-size: 12px;">
+      &mdash; supprime les incidents/logs générés par <code>*buffextras@znc.in</code>
+      (le pseudo-user ZNC qui injecte des messages système au playback).
+    </span>
+  </div>
+  <form method="post" action="/moderation/alerts/purge_buffextras"
+        onsubmit="return confirm('Purger tous les incidents et logs LLM générés par *buffextras/znc.in ? Irréversible.');"
+        style="margin: 0;">
+    <button type="submit" style="background:#5a1a1a; border-color:#844; color:#f8b5b5;">
+      Purger *buffextras
+    </button>
+  </form>
+</div>
+
+{% if counts %}
+<div class="kpi-row">
+  {% for t, n in counts.items() %}
+  <div class="kpi">
+    <div class="n">{{ n }}</div>
+    <div class="label"><span class="badge {{ t }}">{{ t }}</span></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="get" action="/moderation/alerts">
+    <div class="filters">
+      <div>
+        <label>Chan</label>
+        <select name="channel">
+          <option value="">— tous —</option>
+          {% for p in policies %}
+          <option value="{{ p.channel }}" {% if filters.channel == p.channel %}selected{% endif %}>{{ p.channel }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Type</label>
+        <select name="incident_type">
+          <option value="">— tous —</option>
+          {% for t in known_types %}
+          <option value="{{ t }}" {% if filters.incident_type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Nick</label>
+        <input type="text" name="nick" value="{{ filters.nick }}" placeholder="nick exact">
+      </div>
+      <div>
+        <label>Sévérité min</label>
+        <input type="number" name="min_severity" value="{{ filters.min_severity }}" min="0" max="10">
+      </div>
+      <div>
+        <label>Depuis (heures)</label>
+        <input type="number" name="since_hours" value="{{ filters.since_hours }}" min="1" max="720">
+      </div>
+      <div>
+        <label>Limite</label>
+        <input type="number" name="limit" value="{{ filters.limit }}" min="10" max="1000" step="50">
+      </div>
+      <button type="submit">Filtrer</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">{{ incidents|length }} alertes</h3>
+  {% if incidents %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Type</th>
+        <th>Sev</th>
+        <th>Chan</th>
+        <th>Nick</th>
+        <th>IP / Host</th>
+        <th>Detail</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in incidents %}
+      <tr>
+        <td><small class="muted">{{ i.ts.strftime('%m-%d %H:%M:%S') }}</small></td>
+        <td><span class="badge {{ i.incident_type }}">{{ i.incident_type }}</span></td>
+        <td>
+          {% if i.severity >= 8 %}
+            <span class="sev high">{{ i.severity }}</span>
+          {% elif i.severity >= 4 %}
+            <span class="sev med">{{ i.severity }}</span>
+          {% else %}
+            <span class="sev low">{{ i.severity }}</span>
+          {% endif %}
+        </td>
+        <td class="mono">{{ i.channel }}</td>
+        <td class="mono"><strong>{{ i.nick }}</strong></td>
+        <td class="mono"><small>{{ i.ip or '—' }}<br>{{ i.host or '—' }}</small></td>
+        <td class="detail-cell">{{ i.detail }}</td>
+        <td>
+          <form method="post" action="/moderation/alerts/{{ i.id }}/delete"
+                onsubmit="return confirm('Supprimer cette alerte ?');"
+                style="margin:0;">
+            <button type="submit" title="Supprimer cette alerte"
+                    style="padding:2px 8px; font-size:11px; background:transparent; border:1px solid var(--border); color:var(--muted);">×</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pager">
+    {% if prev_offset is not none %}
+      <a class="btn ghost" href="?channel={{ filters.channel }}&incident_type={{ filters.incident_type }}&nick={{ filters.nick }}&min_severity={{ filters.min_severity }}&since_hours={{ filters.since_hours }}&limit={{ filters.limit }}&offset={{ prev_offset }}">← Précédents</a>
+    {% endif %}
+    <span class="muted">offset {{ filters.offset }}</span>
+    {% if next_offset is not none %}
+      <a class="btn ghost" href="?channel={{ filters.channel }}&incident_type={{ filters.incident_type }}&nick={{ filters.nick }}&min_severity={{ filters.min_severity }}&since_hours={{ filters.since_hours }}&limit={{ filters.limit }}&offset={{ next_offset }}">Suivants →</a>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="muted">Aucune alerte sur ces filtres.</p>
+  {% endif %}
+</div>
+{% endblock %}
